@@ -1,7 +1,7 @@
 /* TEK-INW — service worker (plik generowany przez zrodla/build.py — nie edytować ręcznie).
    Zapisuje pliki aplikacji w pamięci urządzenia przy pierwszym uruchomieniu; potem aplikacja działa bez internetu.
-   Nowa wersja = nowa nazwa pamięci (tek-inw-0.4.0); stara jest usuwana po aktywacji. */
-const CACHE = 'tek-inw-0.4.0';
+   Nowa wersja = nowa nazwa pamięci (tek-inw-0.4.1); stara jest usuwana po aktywacji. */
+const CACHE = 'tek-inw-0.4.1';
 const PLIKI = [
 "./",
 "css/baza.css",
@@ -9,6 +9,7 @@ const PLIKI = [
 "fonts/IBMPlexMono-Medium.woff2",
 "fonts/IBMPlexMono-Regular.woff2",
 "fonts/IBMPlexMono_500Medium.ttf",
+"fonts/IBMPlexSans_300Light.ttf",
 "fonts/IBMPlexSans_400Regular.ttf",
 "fonts/IBMPlexSans_600SemiBold.ttf",
 "fonts/fraunces-500-ext.woff2",

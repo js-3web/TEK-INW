@@ -236,7 +236,7 @@ function vProjekt() {
     <label class="f"><span>Rozdzielczość zdjęć w PDF fotodokumentacji</span><select data-ust="pdfPx">${[[1200, '1200 px — lekki PDF'], [1600, '1600 px — zalecane'], [2400, '2400 px — duży PDF']].map(([v, t]) => `<option value="${v}"${+u.pdfPx === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
     <label class="chk"><input type="checkbox" data-ust="aparatOdRazu"${u.aparatOdRazu ? ' checked' : ''}> Po postawieniu punktu F od razu otwieraj aparat</label>
     <p class="hint">Rozmiary plików są orientacyjne — zależą od treści zdjęcia. 300 zdjęć po 0,9 MB to ok. 270 MB w pamięci iPada.</p>
-    <h3>Statystyka</h3><p class="sm">${S.arkusze.length} podkład(y) · ${S.znaczniki.filter(z => z.rodzaj === 'F').length} punktów F · ${S.znaczniki.filter(z => z.rodzaj === 'Z').length} zmian Z · ${S.znaczniki.reduce((s, z) => s + (z.zdjecia || []).length, 0)} zdjęć</p>
+    <h3>Statystyka</h3><p class="sm">${odm(S.arkusze.length, 'podkład', 'podkłady', 'podkładów')} · ${odm(S.znaczniki.filter(z => z.rodzaj === 'F').length, 'punkt F', 'punkty F', 'punktów F')} · ${odm(S.znaczniki.filter(z => z.rodzaj === 'Z').length, 'zmiana Z', 'zmiany Z', 'zmian Z')} · ${odm(S.znaczniki.reduce((s, z) => s + (z.zdjecia || []).length, 0), 'zdjęcie', 'zdjęcia', 'zdjęć')}</p>
     <div class="btns"><button class="btn danger" data-act="proj-usun" data-id="${esc(S.id)}">Usuń projekt z urządzenia…</button></div></section></div>`;
 }
 
@@ -293,7 +293,7 @@ async function wyborStron(doc, nazwa, wszystkie) {
   const n = doc.numPages; const info = [];
   for (let i = 1; i <= Math.min(n, 60); i++) { const p = await doc.getPage(i); const w = PdfPodklad.wymiary(p); info.push(`${Math.round(w.w * 25.4 / 72)}×${Math.round(w.h * 25.4 / 72)} mm`); }
   let wynik = null;
-  await okno(`<h2>${esc(nazwa)} — ${n} stron</h2><p class="hint">Zaznacz strony, które mają być podkładami (np. rzuty). Każda strona będzie osobnym planem.</p>
+  await okno(`<h2>${esc(nazwa)} — ${odm(n, 'strona', 'strony', 'stron')}</h2><p class="hint">Zaznacz strony, które mają być podkładami (np. rzuty). Każda strona będzie osobnym planem.</p>
     <div class="strony">${info.map((t, i) => `<label class="chk"><input type="checkbox" value="${i + 1}"${i === 0 || wszystkie ? ' checked' : ''}> Strona ${i + 1} <span class="muted sm">${t}</span></label>`).join('')}</div>
     <div class="btns right"><button class="btn" data-w="anuluj">Anuluj</button><button class="btn primary" data-w="ok">Dodaj zaznaczone</button></div>`, 'waski', (d) => {
     d.addEventListener('click', (e) => { if (e.target.closest('[data-w=ok]')) wynik = $$('.strony input:checked', d).map(x => +x.value); }, true);
@@ -426,7 +426,7 @@ async function pokazArkusz() {
       PdfPodklad.punktySnap(r.page).then(sn => { r.snap = sn.ile > 20 ? sn.indeks : null; r.snapIle = sn.ile; const t = $('#tgSnap'); if (t && arkId === a.id) { t.style.display = r.snap ? '' : 'none'; t.title = r.snap ? `Przyciąganie do ${sn.ile} punktów rysunku wektorowego (narożniki, końce linii, skrzyżowania)${sn.pelny ? ' — limit, część pominięta' : ''}` : t.title; } })
         .catch(e => console.warn('Przyciąganie PDF:', e));
     }
-    if (doc) status(!Tark(a) ? 'Plan docelowy bez kalibracji — skalibruj go współrzędnymi dwóch punktów, a punkty zdjęć przeniosą się same.' : `Plan docelowy: ${zn.length} punktów przeniesionych z podkładów roboczych. Narzędzie „Przesuń” poprawia położenie tylko na tym planie.`);
+    if (doc) status(!Tark(a) ? 'Plan docelowy bez kalibracji — skalibruj go współrzędnymi dwóch punktów, a punkty zdjęć przeniosą się same.' : `Plan docelowy: ${odm(zn.length, 'punkt przeniesiony', 'punkty przeniesione', 'punktów przeniesionych')} z podkładów roboczych. Narzędzie „Przesuń” poprawia położenie tylko na tym planie.`);
     else status(a.typ === 'pdf' && !a.kal ? 'PDF bez kalibracji — punkty i zdjęcia działają; wymiary i eksport DXF po kalibracji.' : '');
     if (a.typ === 'pdf' && !a.kal) toast(doc ? 'Skalibruj plan docelowy: dwa punkty o znanych współrzędnych w tym samym układzie co podkład roboczy (np. A/1 i D/13).' : 'Ten PDF nie jest skalibrowany. Kalibracja: przycisk „Kalibruj” i dwa punkty o znanych współrzędnych.', false, { tekst: 'Kalibruj teraz', fn: () => rozpocznijKalibracje(a.id) });
   } catch (e) { console.error(e); status(''); toast('Nie udało się wyświetlić podkładu: ' + (e.message || e), true); }
@@ -527,7 +527,7 @@ function ustawObszar(pk) {
   if (o[2] - o[0] < 1e-6 || o[3] - o[1] < 1e-6) return toast('Obszar musi być prostokątem — wskaż dwa przeciwległe narożniki.', true);
   a.obszar = o; if (r) r.obszar = o; zapisz(true);
   wybierzNarzedzie('przegladaj'); odswiezPlan(); const x = $('#btnObszarX'); if (x) x.style.display = '';
-  toast(`Zapisano obszar rzutu. Na tym arkuszu: ${znacznikiArkusza(a).length} punktów.`);
+  toast(`Zapisano obszar rzutu. Na tym arkuszu: ${odm(znacznikiArkusza(a).length, 'punkt', 'punkty', 'punktów')}.`);
 }
 
 /* --- kalibracja PDF --- */
@@ -566,7 +566,7 @@ async function dokonczKalibracje(pk) {
   if (w === 'ok') {
     const r = R.get(a.id); if (r) ustawKalibracje(r, a); zapisz(true);
     const skalaPapier = Geom.skala(a.kal.T) / (25.4 / 72); // mm świata na mm papieru
-    toast(`Zapisano kalibrację. Skala podkładu ≈ 1:${Math.round(skalaPapier)}.${doc ? ` Przeniesiono ${znacznikiArkusza(a).length} punktów na ten arkusz.` : ''} Sprawdź narzędziem „Pomiar” znany wymiar (np. rozstaw osi).`);
+    toast(`Zapisano kalibrację. Skala podkładu ≈ 1:${Math.round(skalaPapier)}.${doc ? ` Przeniesiono na ten arkusz: ${odm(znacznikiArkusza(a).length, 'punkt', 'punkty', 'punktów')}.` : ''} Sprawdź narzędziem „Pomiar” znany wymiar (np. rozstaw osi).`);
   }
   wybierzNarzedzie('przegladaj'); odswiezPlan();
 }
@@ -734,7 +734,7 @@ async function eksportuj() {
         planyRobocze: S.arkusze.filter(a => !docelowy(a)).map(a => ({ a, znaczniki: S.znaczniki.filter(z => z.arkuszId === a.id && z.rodzaj === 'Z'), naglowek: true })),
         planDocelowy: new Map([...M].map(([id, m]) => [id, m.a.nazwa]))
       });
-      const poza = pokrycie(M).poza.length; if (poza) toast(`${poza} punktów nie ma miejsca na planie docelowym — ich zdjęcia będą w PDF bez mini-planu.`, true);
+      const poza = pokrycie(M).poza.length; if (poza) toast(`Poza planem docelowym: ${odm(poza, 'punkt', 'punkty', 'punktów')} — ich zdjęcia będą w PDF bez mini-planu.`, true);
     }
     const plik = await Eksport.paczka(S, R, opc, post);
     ostatniaPaczka = plik;
@@ -767,7 +767,7 @@ document.addEventListener('click', async (e) => {
     else if (act === 'import') { const [f] = await wybierzPliki({ accept: '.zip,.json,application/zip' }); if (!f) return; toast('Wczytuję kopię…'); const p = await Eksport.importuj(f); if (p) { toast('Zaimportowano projekt.'); otworzProjekt(p); } }
     else if (act === 'proj-otworz') { e.stopPropagation(); const p = await Baza.projekt(id); if (p) otworzProjekt(p); }
     else if (act === 'proj-usun') { e.stopPropagation(); const p = (await Baza.projekt(id)); if (!p) return; const nzd = p.znaczniki.reduce((s, z) => s + (z.zdjecia || []).length, 0);
-      if (await potwierdz(`Usunąć projekt „${esc(p.meta.nazwa || 'bez nazwy')}” z tego urządzenia? Zostaną usunięte podkłady i ${nzd} zdjęć. Tego nie da się cofnąć — jeśli nie masz kopii ZIP, najpierw zrób eksport.`, 'Usuń projekt', 'Anuluj', true)) { await Baza.usunProjekt(id); if (S && S.id === id) { S = null; } toast('Usunięto projekt.'); render(); } }
+      if (await potwierdz(`Usunąć projekt „${esc(p.meta.nazwa || 'bez nazwy')}” z tego urządzenia? Zostaną usunięte podkłady i ${odm(nzd, 'zdjęcie', 'zdjęcia', 'zdjęć')}. Tego nie da się cofnąć — jeśli nie masz kopii ZIP, najpierw zrób eksport.`, 'Usuń projekt', 'Anuluj', true)) { await Baza.usunProjekt(id); if (S && S.id === id) { S = null; } toast('Usunięto projekt.'); render(); } }
     else if (act === 'dodaj-podklad') { const f = await wybierzPliki({ accept: '.dxf,.pdf,application/pdf,application/dxf,image/vnd.dxf', multiple: true }); if (f.length) await dodajPodklad(f, b.dataset.rola); }
     else if (act === 'demo-docelowy') { const bl = await (await fetch('przyklad/hala_docelowy_A3x2.pdf')).blob(); await dodajPodklad([new File([bl], 'hala_docelowy_A3x2.pdf', { type: 'application/pdf' })], 'docelowy'); toast('Dodano przykładowy plan docelowy. Kalibracja: ark. 1 — A/1 = 0;0 i D/7 = 72;72 m; ark. 2 — A/7 = 72;0 i D/13 = 144;72 m. Potem „Obszar rzutu” na każdym arkuszu.'); }
     else if (act === 'ark-powiel') await powielArkusz(id, false);
