@@ -9,7 +9,7 @@
 const Eksport = (() => {
   const A4 = [841.89, 595.28];
   const KOL = { F: '#0A8FB0', wymiar: '#c2410c', nowy: '#15803d', brak: '#b91c1c', uwaga: '#7c3aed', szkic: '#57534e', navy: '#0d1830', akcent: '#c1692e', szary: '#6f6e64', linia: '#d8d6cc', tlo: '#faf9f4' };
-  const TYPY = { wymiar: 'Inny wymiar / położenie', nowy: 'Nowy element', brak: 'Element nie istnieje', uwaga: 'Uwaga', szkic: 'Szkic odręczny' };
+  const TYPY = { wymiar: 'Inny wymiar / położenie', nowy: 'Nowy element', brak: 'Element nie istnieje', uwaga: 'Uwaga', szkic: 'Szkic / notatka odręczna' };
   const ascii = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ł/g, 'l').replace(/Ł/g, 'L');
   const nazwaPl = (s, dl = 40) => ascii(bezpiecznaNazwa(s, dl));
   let bib = null;
@@ -232,7 +232,8 @@ const Eksport = (() => {
           rect = [x - r0 * 1.3, y - r0 * 1.3, x + r0 * 1.3, y + r0 * 1.3];
         } else {
           const lw = r0 * 0.22;
-          if (pts.length > 1) { const d = 'M' + pts.map(q => `${q[0]} ${h + NAGL - q[1]}`).join(' L') + (z.geom.zamkn ? ' Z' : ''); p.drawSvgPath(d, { x: 0, y: h + NAGL, borderColor: kol, borderWidth: lw, borderDashArray: z.typZ === 'brak' ? [lw * 3, lw * 2] : undefined }); }
+          if (z.geom.kreski && !z._punktowy) { for (const k of z.geom.kreski) { const Q = k.pkt.map(q => naPlanie(a, q)); if (Q.length < 2) continue; p.drawSvgPath('M' + Q.map(q => `${q[0]} ${h + NAGL - q[1]}`).join(' L') + (k.zamkn ? ' Z' : ''), { x: 0, y: h + NAGL, borderColor: kol, borderWidth: lw * 0.8 }); } } // szkic / notatka z wielu kresek
+          else if (pts.length > 1) { const d = 'M' + pts.map(q => `${q[0]} ${h + NAGL - q[1]}`).join(' L') + (z.geom.zamkn ? ' Z' : ''); p.drawSvgPath(d, { x: 0, y: h + NAGL, borderColor: kol, borderWidth: lw, borderDashArray: z.typZ === 'brak' ? [lw * 3, lw * 2] : undefined }); }
           if (z.typZ === 'brak' && pts.length > 2) { const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]); p.drawLine({ start: { x: Math.min(...xs), y: Math.min(...ys) }, end: { x: Math.max(...xs), y: Math.max(...ys) }, thickness: lw * 0.6, color: kol }); p.drawLine({ start: { x: Math.min(...xs), y: Math.max(...ys) }, end: { x: Math.max(...xs), y: Math.min(...ys) }, thickness: lw * 0.6, color: kol }); }
           if (z.typZ === 'uwaga' || z._punktowy) { const [x, y] = pts[0]; p.drawSvgPath(`M${x} ${h + NAGL - y - r0} L${x + r0} ${h + NAGL - y} L${x} ${h + NAGL - y + r0} L${x - r0} ${h + NAGL - y} Z`, { x: 0, y: h + NAGL, color: kol }); }
           const [lx0, ly0] = z.typZ === 'wymiar' && pts.length === 2 ? [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2 + r0 * 1.3] : (z.typZ === 'uwaga' || z._punktowy) ? [pts[0][0] + r0 * 2.2, pts[0][1] + r0] : [pts[0][0], pts[0][1] + r0 * 1.3];
@@ -282,8 +283,10 @@ const Eksport = (() => {
           if (zg.kier !== null && zg.kier !== undefined) p.drawSvgPath(klin(X, h - Y, 46, zg.kier), { x: 0, y: h, color: hexRgb('#22C3E6'), opacity: 0.3, borderColor: kk, borderWidth: 0.8 });
           p.drawCircle({ x: X, y: Y, size: 6, color: kk, borderColor: hexRgb('#ffffff'), borderWidth: 1.2 });
         } else if (pts.length > 1) {
-          const d = 'M' + pts.map(q => `${clamp(q[0], mx - 50, mx + mw + 50)} ${h - clamp(q[1], my - 50, my + mh + 50)}`).join(' L') + (zg.geom.zamkn ? ' Z' : '');
-          p.pushOperators(pushGraphicsState(), rectangle(mx, my, mw, mh), clip(), endPath()); p.drawSvgPath(d, { x: 0, y: h, borderColor: kk, borderWidth: 2 }); p.pushOperators(popGraphicsState());
+          const linie = zg.geom.kreski ? zg.geom.kreski.map(k => ({ Q: k.pkt.map(S2), zamkn: k.zamkn })) : [{ Q: pts, zamkn: zg.geom.zamkn }];
+          p.pushOperators(pushGraphicsState(), rectangle(mx, my, mw, mh), clip(), endPath());
+          for (const { Q, zamkn } of linie) { if (Q.length < 2) continue; const d = 'M' + Q.map(q => `${clamp(q[0], mx - 50, mx + mw + 50)} ${h - clamp(q[1], my - 50, my + mh + 50)}`).join(' L') + (zamkn ? ' Z' : ''); p.drawSvgPath(d, { x: 0, y: h, borderColor: kk, borderWidth: 2 }); }
+          p.pushOperators(popGraphicsState());
         } else { const [X, Y] = pts[0]; p.drawSvgPath(`M${X} ${h - Y - 7} L${X + 7} ${h - Y} L${X} ${h - Y + 7} L${X - 7} ${h - Y} Z`, { x: 0, y: h, color: kk, borderColor: hexRgb('#ffffff'), borderWidth: 1 }); }
         const fitR = (() => { const pp = naPlanie(a, c), r = clamp(Math.max(P.w, P.h) / 12, 40, 1200); return [pp[0] - r, pp[1] - r * 0.65, pp[0] + r, pp[1] + r * 0.65]; })();
         link(p, [mx, my, mx + mw, my + mh], strPlan.get(a.id), fitR);
@@ -374,7 +377,7 @@ const Eksport = (() => {
   /* ---------- DXF zmian (format R12 — czyta go każdy CAD, także ZWCAD 2022) ---------- */
   const WARSTWY = [['INW-FOTO', 4], ['INW-WYMIAR', 30], ['INW-NOWE', 3], ['INW-BRAK', 1], ['INW-UWAGI', 6], ['INW-SZKIC', 8], ['INW-NUMERY', 7]];
   function dxfTekst(s) { return String(s || '').replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, c => '\\U+' + c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')); }
-  function dxfZmian(S, a, r) {
+  function dxfZmian(S, a, r, ids) { // ids — arkusze z tego samego rysunku (kopie planu) łączone w jeden plik DXF
     const T = r.T || { a: 25.4 / 72, b: 0, c: 0, d: -25.4 / 72, e: 0, f: 0 }; // brak kalibracji PDF: mm na papierze
     const L = []; const n = (v) => (Math.round(v * 10000) / 10000).toString();
     const kod = (c, v) => { L.push(String(c), String(v)); };
@@ -395,7 +398,7 @@ const Eksport = (() => {
     kod(0, 'ENDSEC');
     kod(0, 'SECTION'); kod(2, 'ENTITIES');
     if (!r.T) txt('INW-UWAGI', [0, hT * 4], 'UWAGA: podklad PDF nieskalibrowany - wspolrzedne w mm na papierze, nie w ukladzie rysunku', hT * 1.5);
-    for (const z of S.znaczniki.filter(q => q.arkuszId === a.id)) {
+    for (const z of S.znaczniki.filter(q => (ids || [a.id]).includes(q.arkuszId))) {
       const P = z.geom.pkt.map(W); if (!P.length) continue;
       const nr = z.nr;
       if (z.rodzaj === 'F') {
@@ -415,6 +418,9 @@ const Eksport = (() => {
         let rot = ang * 180 / Math.PI; if (rot > 90.0001 || rot < -89.9999) rot += 180;
         const mid = [(P[0][0] + P[1][0]) / 2 + nx * 1.4, (P[0][1] + P[1][1]) / 2 + ny * 1.4];
         txt(war, mid, `${nr} ${opisWymiaruMm(z, r)}`, hT * 0.9, ((rot % 360) + 360) % 360);
+      } else if (z.geom.kreski) { // szkic / notatka: każda kreska osobną polilinią
+        for (const k of z.geom.kreski) if (k.pkt.length > 1) pl(war, k.pkt.map(W), !!k.zamkn);
+        txt('INW-NUMERY', [P[0][0] + hT * 0.4, P[0][1] + hT * 0.6], nr + (z.element ? ' ' + z.element : ''), hT);
       } else if (P.length > 1) {
         pl(war, P, !!z.geom.zamkn);
         if (z.typZ === 'brak') { const xs = P.map(p => p[0]), ys = P.map(p => p[1]); linia(war, [Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]); linia(war, [Math.min(...xs), Math.max(...ys)], [Math.max(...xs), Math.min(...ys)]); }
@@ -451,7 +457,8 @@ const Eksport = (() => {
       arkusze: S.arkusze.map(a => { const r = R.get(a.id); return { id: a.id, nazwa: a.nazwa, podklad: a.zrodlo.nazwa, typ: a.typ, kalibracja: !!(r && r.T), jednostkaWspolrzednych: r ? (r.typ === 'dxf' ? `jednostka DXF (${r.dxf.jednostki}; 1 = ${r.k} mm)` : r.T ? 'mm' : 'mm na papierze (brak kalibracji)') : '' }; }),
       zmiany: Zm.map(z => { const r = R.get(z.arkuszId), T = r && r.T; return {
         nr: z.nr, rodzaj: z.typZ, opisRodzaju: TYPY[z.typZ], arkusz: z.arkuszId, element: z.element || null, kategoria: z.kategoria || null, zrodlo: z.zrodlo || null, opis: z.opis || null,
-        geometria: { typ: z.geom.typ, zamknieta: !!z.geom.zamkn, punkty: T ? z.geom.pkt.map(p => Geom.zastosuj(T, ...p).map(v => Math.round(v * 1000) / 1000)) : null, punktyArkusza: z.geom.pkt },
+        geometria: { typ: z.geom.typ, zamknieta: !!z.geom.zamkn, punkty: T ? z.geom.pkt.map(p => Geom.zastosuj(T, ...p).map(v => Math.round(v * 1000) / 1000)) : null, punktyArkusza: z.geom.pkt,
+          kreski: z.geom.kreski ? z.geom.kreski.map(k => ({ ksztalt: k.ksztalt || 'odreczna', zamknieta: !!k.zamkn, punkty: T ? k.pkt.map(p => Geom.zastosuj(T, ...p).map(v => Math.round(v * 1000) / 1000)) : null })) : undefined },
         wymiar: z.typZ === 'wymiar' ? { rysunek_mm: Number.isFinite(wymRysMm(z, R)) ? Math.round(wymRysMm(z, R)) : null, pomiar_mm: Number.isFinite(z.wymPom) ? Math.round(z.wymPom) : null } : undefined,
         zdjecia: (z.zdjecia || []).map((_, i) => 'zdjecia/' + plikZdj(z, i)) }; })
     };
@@ -485,7 +492,9 @@ W załączeniu: zmiany.json (lista zmian z TEK-INW), pliki zmiany_*.dxf (podglą
     }
     if (opcje.zestawienia) { const z = zestawienia(S, R, opcje.planDocelowy); pliki.push(['zestawienie_zdjec.csv', enc(z.zdjecia), true], ['zestawienie_zmian.csv', enc(z.zmiany), true]); }
     if (opcje.dxf) {
-      for (const a of S.arkusze) { const r = R.get(a.id); if (!r || !S.znaczniki.some(z => z.arkuszId === a.id)) continue; pliki.push([`zmiany_${nazwaPl(a.nazwa, 30)}.dxf`, enc(dxfZmian(S, a, r)), true]); }
+      // kopie planu z tego samego rysunku (ten sam plik i strona) → jeden DXF zmian, jak jeden rysunek w ZWCAD
+      const grupy = new Map(); for (const a of S.arkusze) { const k = a.zrodlo.plikId + '#' + (a.zrodlo.strona || 1); if (!grupy.has(k)) grupy.set(k, []); grupy.get(k).push(a); }
+      for (const gr of grupy.values()) { const a = gr[0], r = R.get(a.id), ids = gr.map(x => x.id); if (!r || !S.znaczniki.some(z => ids.includes(z.arkuszId))) continue; pliki.push([`zmiany_${nazwaPl(a.nazwa, 30)}.dxf`, enc(dxfZmian(S, a, r, ids)), true]); }
       pliki.push(['zmiany.json', enc(JSON.stringify(daneDlaAI(S, R), null, 1)), true], ['PROMPT_naniesienie_zmian.txt', enc(PROMPT(S)), true]);
     }
     if (opcje.kopia) {

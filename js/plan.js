@@ -18,7 +18,9 @@ const Plan = (() => {
   let v = { s: 1, tx: 0, ty: 0 };             // bieżący widok
   let vt = null;                              // widok, dla którego narysowano płótno tła
   let narz = 'przegladaj', podtryb = 'linia', punkty = [], celownik = null, hover = null, zazn = null;
-  let opcje = { snap: true, orto: false, palec: false, kolory: false, tylkoRysik: false };
+  let opcje = { snap: true, orto: false, palec: false, kolory: false, tylkoRysik: false, wygladzaj: true, rysikPisze: true };
+  let szkicKsztalt = null, szkicTimer = 0; // kształt rozpoznany po przytrzymaniu rysika na końcu kreski
+  const katOsi = () => A && A.T ? -Geom.katOsiX(A.T) : 0; // kierunek osi X rysunku na arkuszu
   const wsk = new Map(); let gest = null; let cb = {};
   let rysujZadanie = 0, tloZadanie = 0, detal = null, detalZadania = [], detalTimer = 0, foto = null, szkic = null, pomiar = null;
 
@@ -183,7 +185,8 @@ const Plan = (() => {
     } else {
       g.strokeStyle = wyb ? '#ffb000' : kol; g.lineWidth = wyb ? 3.5 : 2.5; g.lineJoin = 'round'; g.lineCap = 'round';
       if (z.typZ === 'brak') g.setLineDash([7, 5]);
-      if (P.length > 1) { g.beginPath(); g.moveTo(...P[0]); for (const p of P.slice(1)) g.lineTo(...p); if (z.geom.zamkn) g.closePath(); g.stroke(); }
+      if (z.geom.kreski) { for (const k of z.geom.kreski) { const Q = k.pkt.map(q => naEkran(q[0], q[1])); if (Q.length < 2) continue; g.beginPath(); g.moveTo(...Q[0]); for (const q of Q.slice(1)) g.lineTo(...q); if (k.zamkn) g.closePath(); g.stroke(); } } // notatka / szkic z wielu kresek
+      else if (P.length > 1) { g.beginPath(); g.moveTo(...P[0]); for (const p of P.slice(1)) g.lineTo(...p); if (z.geom.zamkn) g.closePath(); g.stroke(); }
       g.setLineDash([]);
       if (z.typZ === 'brak' && P.length > 2) { // przekreślenie
         const xs = P.map(p => p[0]), ys = P.map(p => p[1]); g.lineWidth = 1.5; g.beginPath();
@@ -218,7 +221,11 @@ const Plan = (() => {
       g.stroke(); g.setLineDash([]); for (const p of P) { g.beginPath(); g.arc(p[0], p[1], 3.5, 0, Math.PI * 2); g.fill(); }
       if (c && P.length && cb.opisOdcinka) { const q = naEkran(c.x, c.y); const t = cb.opisOdcinka(punkty[punkty.length - 1], [c.x, c.y]); if (t) etykieta((P[P.length - 1][0] + q[0]) / 2, (P[P.length - 1][1] + q[1]) / 2 - 16, t, '#d9480f', false); }
     }
-    if (szkic && szkic.length > 1) { g.setLineDash([]); g.strokeStyle = KOLORY.szkic; g.lineWidth = 2.5; g.beginPath(); const S0 = szkic.map(p => naEkran(p[0], p[1])); g.moveTo(...S0[0]); for (const p of S0) g.lineTo(...p); g.stroke(); }
+    if (szkic && szkic.length > 1) {
+      g.setLineDash([]); g.lineWidth = 2.5; g.lineJoin = 'round'; g.lineCap = 'round';
+      if (szkicKsztalt) { const S0 = szkicKsztalt.pkt.map(p => naEkran(p[0], p[1])); g.strokeStyle = '#e07b3c'; g.beginPath(); g.moveTo(...S0[0]); for (const p of S0) g.lineTo(...p); if (szkicKsztalt.zamkn) g.closePath(); g.stroke(); }
+      else { g.strokeStyle = KOLORY.szkic; g.beginPath(); const S0 = szkic.map(p => naEkran(p[0], p[1])); g.moveTo(...S0[0]); for (const p of S0) g.lineTo(...p); g.stroke(); }
+    }
     if (foto) { const [x, y] = naEkran(foto.x, foto.y); g.setLineDash([]); g.fillStyle = 'rgba(34,195,230,.25)'; g.strokeStyle = KOLORY.F;
       if (foto.kier !== null) { g.beginPath(); g.moveTo(x, y); g.arc(x, y, 48, foto.kier - 0.5, foto.kier + 0.5); g.closePath(); g.fill(); g.stroke(); }
       g.beginPath(); g.arc(x, y, 11, 0, Math.PI * 2); g.fillStyle = KOLORY.F; g.fill(); }
@@ -285,12 +292,13 @@ const Plan = (() => {
     const palecPrzesuwa = e.pointerType === 'touch' && (opcje.palec || opcje.tylkoRysik);
     if (e.pointerType === 'mouse' && e.button !== 0) { gest = { typ: 'przesun', p0: p, v0: { ...v }, tap: false }; return; }
     if (narz === 'przesunZn' && !palecPrzesuwa) {
-      const z = znajdz(p); if (z) { zazn = z.id; gest = { typ: 'przesunZn', z, p0: p, orig: z.geom.pkt.map(q => q.slice()), ruszyl: false }; if (cb.naWybor) cb.naWybor(z.id); planuj(); return; }
+      const z = znajdz(p); if (z) { zazn = z.id; gest = { typ: 'przesunZn', z, p0: p, orig: z.geom.pkt.map(q => q.slice()), origK: z.geom.kreski ? JSON.parse(JSON.stringify(z.geom.kreski)) : null, ruszyl: false }; if (cb.naWybor) cb.naWybor(z.id); planuj(); return; }
       gest = { typ: 'przesun', p0: p, v0: { ...v }, tap: false }; return;
     }
+    if (narz === 'przegladaj' && e.pointerType === 'pen' && opcje.rysikPisze) { gest = { typ: 'pioro', p0: p, punkty: [naArkusz(...p)] }; return; } // rysik: stuknięcie wybiera, kreska = notatka
     if (narz === 'przegladaj' || palecPrzesuwa) { gest = { typ: 'przesun', p0: p, v0: { ...v }, tap: true }; return; }
     if (narz === 'foto') { const [sx, sy] = naArkusz(...p); foto = { x: sx, y: sy, kier: null, p0: p }; gest = { typ: 'foto' }; planuj(); return; }
-    if (narz === 'szkic') { szkic = [naArkusz(...p)]; gest = { typ: 'szkic' }; planuj(); return; }
+    if (narz === 'szkic') { zacznijSzkic([naArkusz(...p)], p); return; }
     if (potrzebaPunktow()) {
       const palec = e.pointerType === 'touch';
       const q = palec ? [p[0], p[1] - OFFSET_CELOWNIKA] : p;
@@ -315,31 +323,56 @@ const Plan = (() => {
     if (gest.typ === 'przesunZn') {
       let dx = (p[0] - gest.p0[0]) / v.s, dy = (p[1] - gest.p0[1]) / v.s; if (Math.hypot(p[0] - gest.p0[0], p[1] - gest.p0[1]) > 3) gest.ruszyl = true;
       const c = przyciagnij(gest.orig[0][0] + dx, gest.orig[0][1] + dy); if (c.snap) { dx = c.x - gest.orig[0][0]; dy = c.y - gest.orig[0][1]; } // pierwszy punkt przyciąga się do rysunku
-      gest.z.geom.pkt = gest.orig.map(q => [q[0] + dx, q[1] + dy]); planuj(); return;
+      gest.z.geom.pkt = gest.orig.map(q => [q[0] + dx, q[1] + dy]);
+      if (gest.origK) gest.z.geom.kreski = gest.origK.map(k => ({ ...k, pkt: k.pkt.map(q => [q[0] + dx, q[1] + dy]) }));
+      planuj(); return;
     }
     if (gest.typ === 'przesun') {
       if (gest.tap && Math.hypot(p[0] - gest.p0[0], p[1] - gest.p0[1]) > 8) gest.tap = false;
       v = { ...v, tx: gest.v0.tx + p[0] - gest.p0[0], ty: gest.v0.ty + p[1] - gest.p0[1] }; planuj(); return;
     }
     if (gest.typ === 'foto' && foto) { const dx = p[0] - foto.p0[0], dy = p[1] - foto.p0[1]; foto.kier = Math.hypot(dx, dy) > 14 ? Math.atan2(dy, dx) : null; planuj(); return; }
-    if (gest.typ === 'szkic' && szkic) { const q = naArkusz(...p), o = szkic[szkic.length - 1]; if (Math.hypot(q[0] - o[0], q[1] - o[1]) * v.s > 3) { szkic.push(q); planuj(); } return; }
+    if (gest.typ === 'pioro') { gest.punkty.push(naArkusz(...p)); if (Math.hypot(p[0] - gest.p0[0], p[1] - gest.p0[1]) > 6) zacznijSzkic(gest.punkty, p); return; }
+    if (gest.typ === 'szkic' && szkic) {
+      if (szkicKsztalt && Math.hypot(p[0] - szkicKsztalt._p[0], p[1] - szkicKsztalt._p[1]) > 10) szkicKsztalt = null; // ruch po wyrównaniu — wracamy do odręcznej
+      const q = naArkusz(...p), o = szkic[szkic.length - 1]; if (Math.hypot(q[0] - o[0], q[1] - o[1]) * v.s > 3) szkic.push(q);
+      if (Math.hypot(p[0] - gest.kot[0], p[1] - gest.kot[1]) > 4) { gest.kot = p; zegarSzkicu(p); } // drobne drżenie przy przytrzymaniu nie liczy się jako ruch
+      planuj(); return;
+    }
     if (gest.typ === 'celuj') { const q = gest.palec ? [p[0], p[1] - OFFSET_CELOWNIKA] : p; celownik = { ...przyciagnij(...naArkusz(...q)), palec: p, lupa: celownik && celownik.lupa }; planuj(); }
   }
   function gora(e) {
     const w = wsk.get(e.pointerId); wsk.delete(e.pointerId);
     if (!gest) return;
     if (gest.typ === 'szczyp') { if (wsk.size === 0) { gest = null; odswiezTlo(); zmianaWidoku(); } return; }
-    if (gest.typ === 'przesunZn') { const gz = gest; gest = null; const d = [gz.z.geom.pkt[0][0] - gz.orig[0][0], gz.z.geom.pkt[0][1] - gz.orig[0][1]]; gz.z.geom.pkt = gz.orig; if (gz.ruszyl && cb.naPrzesun) cb.naPrzesun(gz.z.id, d); planuj(); return; }
+    if (gest.typ === 'przesunZn') { const gz = gest; gest = null; const d = [gz.z.geom.pkt[0][0] - gz.orig[0][0], gz.z.geom.pkt[0][1] - gz.orig[0][1]]; gz.z.geom.pkt = gz.orig; if (gz.origK) gz.z.geom.kreski = gz.origK; if (gz.ruszyl && cb.naPrzesun) cb.naPrzesun(gz.z.id, d); planuj(); return; }
     if (gest.typ === 'przesun') {
       const tap = gest.tap && w && performance.now() - w.t < 450; gest = null; odswiezTlo(); zmianaWidoku();
       if (tap) trafienie(w.p); return;
     }
     if (gest.typ === 'foto' && foto) { const f = foto; foto = null; gest = null; planuj(); if (cb.naFoto) cb.naFoto([f.x, f.y], f.kier, e); return; }
-    if (gest.typ === 'szkic' && szkic) { const s = szkic; szkic = null; gest = null; planuj(); if (s.length > 1 && cb.naKoniec) cb.naKoniec({ typZ: 'szkic', geom: { typ: 'odr', pkt: uprosc(s, 1.5 / v.s) } }); return; }
+    if (gest.typ === 'pioro') { gest = null; if (w) trafienie(w.p); return; }
+    if (gest.typ === 'szkic' && szkic) {
+      clearTimeout(szkicTimer); const s = szkic, ks = szkicKsztalt; szkic = null; szkicKsztalt = null; gest = null; planuj();
+      if (s.length > 1) {
+        let k = ks ? { pkt: ks.pkt, zamkn: ks.zamkn, ksztalt: ks.ksztalt } : (opcje.wygladzaj ? Ksztalty.rozpoznaj(s, { kat: katOsi() }) : null);
+        if (!k) k = { pkt: opcje.wygladzaj ? Ksztalty.wygladz(s, 1.2 / v.s) : uprosc(s, 1.5 / v.s), zamkn: false, ksztalt: null };
+        if (cb.naKreske) cb.naKreske(k); else if (cb.naKoniec) cb.naKoniec({ typZ: 'szkic', geom: { typ: 'odr', pkt: k.pkt, zamkn: k.zamkn } });
+      }
+      return;
+    }
     if (gest.typ === 'celuj' && celownik) { const c = celownik; celownik = null; gest = null; dodajPunkt([c.x, c.y]); planuj(); return; }
     gest = null;
   }
-  function anulujWsk(e) { wsk.delete(e.pointerId); if (!wsk.size) { gest = null; celownik = null; foto = null; szkic = null; odswiezTlo(); } }
+  function anulujWsk(e) { wsk.delete(e.pointerId); if (!wsk.size) { gest = null; celownik = null; foto = null; szkic = null; szkicKsztalt = null; clearTimeout(szkicTimer); odswiezTlo(); } }
+  function zacznijSzkic(pkt, p) { szkic = pkt; szkicKsztalt = null; gest = { typ: 'szkic', kot: p }; zegarSzkicu(p); planuj(); }
+  function zegarSzkicu(p) { // przytrzymanie rysika (palca) ~0,5 s bez ruchu → kreska zamienia się w kształt (jak w Notatkach iPada)
+    clearTimeout(szkicTimer);
+    szkicTimer = setTimeout(() => {
+      if (!gest || gest.typ !== 'szkic' || !szkic || szkic.length < 3) return;
+      const k = Ksztalty.rozpoznaj(szkic, { kat: katOsi(), wymus: true }); if (k) { szkicKsztalt = { ...k, _p: p }; planuj(); }
+    }, 480);
+  }
   function kolko(e) {
     e.preventDefault(); if (!A) return;
     const p = xy(e);
@@ -397,7 +430,8 @@ const Plan = (() => {
     for (const z of Z) {
       const P = (z.geom.pkt || []).map(q => naEkran(q[0], q[1]));
       let d = Infinity;
-      if (z.rodzaj === 'F' || P.length === 1) d = Math.hypot(P[0][0] - p[0], P[0][1] - p[1]);
+      if (z.geom.kreski) { for (const k of z.geom.kreski) { const Q = k.pkt.map(q => naEkran(q[0], q[1])); if (Q.length === 1) d = Math.min(d, Math.hypot(Q[0][0] - p[0], Q[0][1] - p[1])); for (let i = 0; i < Q.length - (k.zamkn ? 0 : 1); i++) d = Math.min(d, odlOdc(p, Q[i], Q[(i + 1) % Q.length])); } }
+      else if (z.rodzaj === 'F' || P.length === 1) d = Math.hypot(P[0][0] - p[0], P[0][1] - p[1]);
       else for (let i = 0; i < P.length - (z.geom.zamkn ? 0 : 1); i++) d = Math.min(d, odlOdc(p, P[i], P[(i + 1) % P.length]));
       if (d < bd) { bd = d; best = z; }
     }
