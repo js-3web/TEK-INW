@@ -1,7 +1,7 @@
 /* TEK-INW — service worker (plik generowany przez zrodla/build.py — nie edytować ręcznie).
    Zapisuje pliki aplikacji w pamięci urządzenia przy pierwszym uruchomieniu; potem aplikacja działa bez internetu.
-   Nowa wersja = nowa nazwa pamięci (tek-inw-0.1.0); stara jest usuwana po aktywacji. */
-const CACHE = 'tek-inw-0.1.0';
+   Nowa wersja = nowa nazwa pamięci (tek-inw-0.3.0); stara jest usuwana po aktywacji. */
+const CACHE = 'tek-inw-0.3.0';
 const PLIKI = [
 "./",
 "css/baza.css",
@@ -9,11 +9,22 @@ const PLIKI = [
 "fonts/IBMPlexMono-Medium.woff2",
 "fonts/IBMPlexMono-Regular.woff2",
 "fonts/IBMPlexMono_500Medium.ttf",
-"fonts/IBMPlexSans-Medium.woff2",
-"fonts/IBMPlexSans-Regular.woff2",
-"fonts/IBMPlexSans-SemiBold.woff2",
 "fonts/IBMPlexSans_400Regular.ttf",
 "fonts/IBMPlexSans_600SemiBold.ttf",
+"fonts/fraunces-500-ext.woff2",
+"fonts/fraunces-500-latin.woff2",
+"fonts/fraunces-600-ext.woff2",
+"fonts/fraunces-600-latin.woff2",
+"fonts/nunito-400-ext.woff2",
+"fonts/nunito-400-latin.woff2",
+"fonts/nunito-600-ext.woff2",
+"fonts/nunito-600-latin.woff2",
+"fonts/nunito-700-ext.woff2",
+"fonts/nunito-700-latin.woff2",
+"fonts/nunito-800-ext.woff2",
+"fonts/nunito-800-latin.woff2",
+"fonts/space-400-ext.woff2",
+"fonts/space-400-latin.woff2",
 "icons/favicon.svg",
 "icons/icon-180.png",
 "icons/icon-192.png",
@@ -32,6 +43,7 @@ const PLIKI = [
 "manifest.webmanifest",
 "przyklad/hala_demo.dxf",
 "przyklad/hala_demo_A1.pdf",
+"przyklad/hala_docelowy_A3x2.pdf",
 "vendor/dxf-parser.js",
 "vendor/fflate.min.js",
 "vendor/fontkit.umd.min.js",
@@ -56,7 +68,8 @@ const PLIKI = [
 "vendor/pdfjs/wasm/openjpeg.wasm",
 "vendor/pdfjs/wasm/qcms_bg.wasm"
 ];
-self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(PLIKI))); });
+// cache: 'reload' — pliki zawsze prosto z serwera, nie z pamięci podręcznej przeglądarki (inaczej nowa wersja mogłaby zapisać stare pliki)
+self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(PLIKI.map(u => new Request(u, { cache: 'reload' }))))); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(k => Promise.all(k.filter(n => n.startsWith('tek-inw-') && n !== CACHE).map(n => caches.delete(n)))).then(() => self.clients.claim())); });
 self.addEventListener('message', (e) => { if (e.data && e.data.typ === 'aktywuj') self.skipWaiting(); });
 self.addEventListener('fetch', (e) => {

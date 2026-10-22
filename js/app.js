@@ -5,6 +5,7 @@
 const KATEGORIE = ['Fundamenty', 'Konstrukcja nośna (słupy, dźwigary, rygle)', 'Stężenia i płatwie', 'Ściany zewnętrzne / obudowa', 'Dach, świetliki, klapy dymowe', 'Posadzka', 'Bramy, doki, rampy, stolarka', 'Ściany wewnętrzne i oddzielenia ppoż.', 'Część biurowo-socjalna', 'Instalacje', 'Wyposażenie i zagospodarowanie (regały, strefy)', 'Otoczenie (place, drogi, rampy zewn.)', 'Inne'];
 const NARZ = [
   ['przegladaj', 'Przeglądaj', 'Przesuwanie planu i wybór znacznika', '<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12m0-1.5v-2a1.5 1.5 0 1 1 3 0V12m0-1.5a1.5 1.5 0 1 1 3 0V12m0-1a1.5 1.5 0 0 1 3 0v4a7 7 0 0 1-7 7h-1.2a6 6 0 0 1-4.8-2.4L3.3 15.4a1.6 1.6 0 0 1 2.5-2L8 15.5"/>'],
+  ['przesunZn', 'Przesuń', 'Przeciągnij znacznik w inne miejsce', '<path d="M12 3v18M3 12h18M12 3 9.5 5.5M12 3l2.5 2.5M12 21l-2.5-2.5M12 21l2.5-2.5M3 12l2.5-2.5M3 12l2.5 2.5M21 12l-2.5-2.5M21 12l-2.5 2.5"/>'],
   ['foto', 'Foto', 'Punkt zdjęcia: stuknij; przeciągnij, aby od razu wskazać kierunek', '<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/>'],
   ['wymiar', 'Wymiar', 'Inny wymiar / położenie: dwa punkty + wynik z dalmierza', '<path d="M3 12h18M3 8v8M21 8v8M7 10l-2 2 2 2M17 10l2 2-2 2"/>'],
   ['nowy', 'Nowy', 'Nowy element (linia, prostokąt, polilinia)', '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 8v8M8 12h8"/>'],
@@ -20,10 +21,78 @@ const ikona = (sciezki) => `<svg viewBox="0 0 24 24" fill="none" stroke="current
 
 /* ---------- jednostki ---------- */
 const jedn = () => (S && S.ustaw.jedn === 'mm') ? 'mm' : 'm';
+const odm = (n, j, d, w) => { const a = Math.abs(n), m10 = a % 10, m100 = a % 100; return `${n} ${a === 1 ? j : (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) ? d : w}`; }; // 1 punkt, 3 punkty, 5 punktów
 const naUz = (mm) => jedn() === 'mm' ? liczba(mm, 0) : liczba(mm / 1000, 3);           // mm → tekst w jednostce użytkownika
 const zUzNaMm = (v) => jedn() === 'mm' ? v : v * 1000;
 function rArk(id) { return R.get(id || arkId); }
 function swiatMm(r, p) { const w = Geom.zastosuj(r.T, p[0], p[1]); return [w[0] * r.k, w[1] * r.k]; }
+
+/* ---------- plan docelowy (biuro): przeniesienie punktów z podkładów roboczych przez współrzędne rysunku ----------
+   Podkład roboczy (teren) i plan docelowy (rysunek po poprawkach) są skalibrowane w TYM SAMYM układzie współrzędnych
+   (np. A/1 = 0;0). Punkt z podkładu roboczego → współrzędne świata [mm] → punkt na arkuszu docelowym. */
+const docelowy = (a) => !!a && a.rola === 'docelowy';
+function Tark(a) { const r = R.get(a.id); if (r && r.T) return r.T; if (a.typ === 'dxf') return a.Tswiat || null; return a.kal ? a.kal.T : null; } // arkusz → świat (jednostki rysunku)
+function kArk(a) { const r = R.get(a.id); return r ? r.k : (a.typ === 'dxf' ? (a.k || 1) : 1); }                               // mm na jednostkę
+function punktRepr(z) { const P = z.geom.pkt; if (z.rodzaj === 'F' || P.length === 1) return P[0]; let x = 0, y = 0; for (const q of P) { x += q[0]; y += q[1]; } return [x / P.length, y / P.length]; }
+function swiatZnacznika(z) { const a = S.arkusze.find(x => x.id === z.arkuszId), T = a && Tark(a); if (!T) return null; const w = Geom.zastosuj(T, ...punktRepr(z)), k = kArk(a); return [w[0] * k, w[1] * k]; }
+function zakresArk(a) { if (a.obszar) return a.obszar; const w = a.wym; return w ? [w.minx, w.miny, w.maxx, w.maxy] : null; }
+const doPokazania = (z) => z.rodzaj === 'F' || (z.zdjecia || []).length > 0; // na planie docelowym: punkty F i zmiany Z, które mają zdjęcia
+function polozenieNaDocelowym(z, a) {
+  if (z.przes && z.przes[a.id]) return z.przes[a.id]; // położenie poprawione ręcznie na tym arkuszu
+  const T = Tark(a), w = swiatZnacznika(z); if (!T || !w) return null;
+  const k = kArk(a); return Geom.zastosuj(Geom.odwroc(T), w[0] / k, w[1] / k);
+}
+function kierNa(z, a) { // kierunek zdjęcia przeniesiony przez obrót między układami (skala nie ma znaczenia)
+  const zr = S.arkusze.find(x => x.id === z.arkuszId), T1 = zr && Tark(zr), T2 = Tark(a); if (!T1 || !T2 || z.kier == null) return null;
+  const Ti = Geom.odwroc(T2), dx = Math.cos(z.kier), dy = Math.sin(z.kier), wx = T1.a * dx + T1.c * dy, wy = T1.b * dx + T1.d * dy;
+  return Math.atan2(Ti.b * wx + Ti.d * wy, Ti.a * wx + Ti.c * wy);
+}
+/* Każdy punkt trafia na jeden arkusz docelowy — ten, na którym leży najdalej od krawędzi obszaru rzutu (ważne przy zakładkach arkuszy A3). */
+function przydzial() {
+  const cele = S.arkusze.filter(a => docelowy(a) && Tark(a)), M = new Map(); if (!cele.length) return M;
+  for (const z of S.znaczniki) {
+    if (!doPokazania(z) || S.arkusze.some(a => a.id === z.arkuszId && docelowy(a))) continue;
+    let best = null;
+    for (const a of cele) {
+      const p = polozenieNaDocelowym(z, a), zk = zakresArk(a); if (!p || !zk) continue;
+      const wym = !!(z.przes && z.przes[a.id]);
+      const m = Math.min(p[0] - zk[0], zk[2] - p[0], p[1] - zk[1], zk[3] - p[1]) / Math.max(1e-9, Math.min(zk[2] - zk[0], zk[3] - zk[1]));
+      if (m < 0 && !wym) continue;
+      const ocena = wym ? 1e9 : m; if (!best || ocena > best.ocena) best = { a, p, ocena, wym };
+    }
+    if (best) M.set(z.id, { a: best.a, p: best.p, przes: best.wym, kier: kierNa(z, best.a) });
+  }
+  return M;
+}
+function znacznikiArkusza(a, mapa) { // znaczniki do pokazania na arkuszu (na docelowym: kopie „wirtualne” — dane wspólne, położenie przeliczone)
+  if (!a) return [];
+  if (!docelowy(a)) return S.znaczniki.filter(z => z.arkuszId === a.id);
+  const M = mapa || przydzial(), out = [];
+  for (const z of S.znaczniki) { const m = M.get(z.id); if (m && m.a.id === a.id) out.push({ ...z, geom: { typ: 'punkt', pkt: [m.p.slice()] }, kier: m.kier, _wirt: true, _punktowy: z.rodzaj === 'Z', _przes: m.przes }); }
+  return out;
+}
+async function zapewnijTransformacje() { // DXF z projektów z wersji 0.1 nie mają zapisanego układu — wczytujemy je raz
+  for (const a of S.arkusze) if (a.typ === 'dxf' && !Tark(a) && (docelowy(a) || S.znaczniki.some(z => z.arkuszId === a.id))) { try { await przygotujArkusz(a, true); } catch (e) { console.warn(e); } }
+}
+function pokrycie(M) {
+  const cele = S.arkusze.filter(docelowy), bezKal = cele.filter(a => !Tark(a));
+  const doPok = S.znaczniki.filter(z => doPokazania(z) && !S.arkusze.some(a => a.id === z.arkuszId && docelowy(a)));
+  const poza = doPok.filter(z => !M.has(z.id)), bezZrodla = poza.filter(z => !swiatZnacznika(z));
+  const odl = S.arkusze.filter(a => a.typ === 'pdf' && a.kal && a.kal.tryb === 'odl' && (docelowy(a) || S.znaczniki.some(z => z.arkuszId === a.id)));
+  const bezObszaru = cele.length > 1 ? cele.filter(a => a.typ === 'pdf' && !a.obszar) : [];
+  return { cele, bezKal, doPok, poza, bezZrodla, odl, bezObszaru, ok: !bezKal.length && !poza.length && !odl.length && !bezObszaru.length && cele.length > 0 };
+}
+function pokrycieHtml(M) {
+  const P = pokrycie(M); if (!P.cele.length) return '';
+  const lista = (zz) => zz.slice(0, 40).map(z => `<b style="color:${kolorZ(z)}">${z.nr}</b>`).join(', ') + (zz.length > 40 ? ` … (+${zz.length - 40})` : '');
+  const w = [];
+  if (P.bezKal.length) w.push(`Arkusze bez kalibracji (punkty się nie przeniosą): ${P.bezKal.map(a => esc(a.nazwa)).join(', ')}.`);
+  if (P.bezObszaru.length) w.push(`Kilka arkuszy, a bez „obszaru rzutu”: ${P.bezObszaru.map(a => esc(a.nazwa)).join(', ')}. Zaznacz na każdym prostokąt rysunku (bez tabelki) — inaczej punkt z pogranicza może trafić na pole tabelki sąsiedniego arkusza.`);
+  if (P.odl.length) w.push(`Kalibracja „znaną odległością” nie odtwarza układu rysunku: ${P.odl.map(a => esc(a.nazwa)).join(', ')}. Skalibruj je <b>współrzędnymi</b> tych samych punktów (np. osie A/1 i D/13) na podkładzie roboczym i docelowym.`);
+  if (P.bezZrodla.length) w.push(`Bez położenia w układzie rysunku (nieskalibrowany podkład roboczy): ${lista(P.bezZrodla)}.`);
+  const pozaZ = P.poza.filter(z => !P.bezZrodla.includes(z)); if (pozaZ.length) w.push(`Poza obszarem arkuszy docelowych: ${lista(pozaZ)} — sprawdź kalibrację, obszar rzutu albo przeciągnij punkt narzędziem „Przesuń”.`);
+  return `<div class="card ${P.ok ? 'ok' : 'warn'} sm pokrycie"><b>Na planie docelowym: ${P.doPok.length - P.poza.length} z ${P.doPok.length} punktów</b> (F i zmiany ze zdjęciami).${w.length ? '<ul class="tight">' + w.map(t => `<li>${t}</li>`).join('') + '</ul>' : ' Wszystkie mają miejsce na planie.'}</div>`;
+}
 
 /* ---------- projekt ---------- */
 function nowyProjekt() {
@@ -64,8 +133,11 @@ async function przygotujArkusz(a, bezObrazu) {
     r = { id: a.id, typ: 'dxf', dxf, w: dxf.zasieg.maxx, h: dxf.zasieg.maxy, k: dxf.k };
     if (!a.warstwyWid) { a.warstwyWid = {}; for (const w of dxf.warstwy) if (!w.wid) a.warstwyWid[w.nazwa] = false; }
   }
-  r.warstwyWid = a.warstwyWid || {};
+  r.warstwyWid = a.warstwyWid || {}; r.obszar = a.obszar || null;
   ustawKalibracje(r, a);
+  // zakres i układ arkusza zapisujemy w projekcie — plan docelowy przelicza punkty bez wczytywania wszystkich podkładów
+  const wym = r.typ === 'dxf' ? { minx: r.dxf.zasieg.minx, miny: r.dxf.zasieg.miny, maxx: r.dxf.zasieg.maxx, maxy: r.dxf.zasieg.maxy } : { minx: 0, miny: 0, maxx: r.w, maxy: r.h };
+  if (JSON.stringify(a.wym) !== JSON.stringify(wym) || (r.typ === 'dxf' && !a.Tswiat)) { a.wym = wym; if (r.typ === 'dxf') { a.Tswiat = { ...r.dxf.T }; a.k = r.k; } zapisz(); }
   R.set(a.id, r); return r;
 }
 function ustawKalibracje(r, a) {
@@ -76,10 +148,10 @@ function ustawKalibracje(r, a) {
 /* ---------- RENDER ---------- */
 function render() {
   document.body.dataset.view = S ? tab : 'start';
-  if (!S) { $('#tabs').innerHTML = ''; $('#view').innerHTML = vStart(); document.title = 'TEK-INW'; planZamontowany = false; odswiezListe(); return; }
-  $('#tabs').innerHTML = `<button class="tab home" data-act="do-startu" title="Zamknij projekt i wróć do listy projektów">‹ PROJEKTY</button>`
-    + TABS.map(([id, n]) => `<button class="tab${id === tab ? ' on' : ''}" data-tab="${id}">${n}${id === 'lista' && S.znaczniki.length ? ` <span class="badge">${S.znaczniki.length}</span>` : ''}</button>`).join('')
-    + `<span class="pnazwa" title="Bieżący projekt">${esc(S.meta.nazwa || 'projekt bez nazwy')}</span>`;
+  if (!S) { $('#tabs').innerHTML = ''; $('#pnazwa').textContent = ''; $('#view').innerHTML = vStart(); document.title = 'TEK-INW'; planZamontowany = false; odswiezListe(); wysokoscPaska(); return; }
+  $('#tabs').innerHTML = `<div class="tabsrow"><button class="tab home" data-act="do-startu" title="Zamknij projekt i wróć do listy projektów">‹ Projekty</button>`
+    + TABS.map(([id, n]) => `<button class="tab${id === tab ? ' on' : ''}" data-tab="${id}">${n}${id === 'lista' && S.znaczniki.length ? ` <span class="badge">${S.znaczniki.length}</span>` : ''}</button>`).join('') + '</div>';
+  $('#pnazwa').textContent = S.meta.nazwa || 'projekt bez nazwy';
   document.title = (S.meta.nazwa ? S.meta.nazwa + ' — ' : '') + 'TEK-INW';
   if (tab !== 'plan') { Plan.zniszcz(); planZamontowany = false; }
   const v = { projekt: vProjekt, podklady: vPodklady, plan: vPlan, lista: vLista, eksport: vEksport, info: vInfo }[tab];
@@ -88,7 +160,7 @@ function render() {
   if (tab === 'eksport') odswiezMiejsce();
   wysokoscPaska();
 }
-function wysokoscPaska() { document.documentElement.style.setProperty('--appbar', ($('.appbar').offsetHeight || 48) + 'px'); }
+function wysokoscPaska() { document.documentElement.style.setProperty('--appbar', (($('.topbar').offsetHeight || 56) + ($('#tabs').offsetHeight || 0)) + 'px'); }
 
 /* ---------- EKRAN GŁÓWNY ---------- */
 let listaProjektow = [];
@@ -96,20 +168,21 @@ async function odswiezListe() { try { listaProjektow = await Baza.projekty(); } 
 function vStart() {
   const ix = listaProjektow.slice().sort((a, b) => (b.zmieniono || 0) - (a.zmieniono || 0));
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  return `<div class="home"><section class="hero"><div class="hl">${LOGO.produktCiemne}</div>
-    <div class="tag">inwentaryzacja budowlana · rzut + zdjęcia + zmiany</div>
-    <div class="meta"><span class="hv">v${APP.wersja}</span><span class="dot">·</span><span>${APP.data}</span><span class="dot">·</span><span>dane tylko na tym urządzeniu · działa bez internetu</span></div>
-    <div class="hm"><span>produkt marki</span>${LOGO.tektoriaCiemne}</div></section>
+  return `<div class="home"><section class="hero"><img class="hero-mark" src="icons/favicon.svg" alt=""><div class="hero-copy">
+    <div class="eyebrow">TEKTORIA · TEK-INW · wersja ${esc(APP.wersja)}</div>
+    <h1>Twój obiekt.<br>Twoja inwentaryzacja.</h1>
+    <p>Rzut DXF lub PDF, punkty zdjęć i zmiany z dalmierza w terenie — w biurze fotodokumentacja PDF z odnośnikami na planie po poprawkach i DXF zmian do ZWCAD.</p>
+    <div class="meta"><span class="stat ok">działa bez internetu</span><span class="stat cz">dane tylko na tym urządzeniu</span></div></div></section>
   ${urzadzenieDotykowe() && !standalone && location.protocol.startsWith('http') ? `<div class="card warn"><h2>Zainstaluj na iPadzie przed pracą w terenie</h2><p class="sm">Safari → <b>Udostępnij</b> → <b>Do ekranu początkowego</b>. Uruchamiaj TEK-INW z ikony — wtedy działa bez internetu, a iPad nie kasuje danych przy porządkowaniu pamięci. Projekty utworzone w Safari mogą nie być widoczne w aplikacji z ikony (to osobne pamięci), więc zacznij pracę dopiero po instalacji.</p></div>` : ''}
   <div class="sec-h"><span>Projekty${ix.length ? ` (${ix.length})` : ''}</span><div class="btns"><button class="btn" data-act="import">Importuj kopię…</button><button class="btn" data-act="demo">Projekt przykładowy</button><button class="btn primary lg" data-act="nowy-projekt">+ Nowy projekt</button></div></div>
   ${ix.length ? `<div class="plist">${ix.map(p => { const nf = p.znaczniki.filter(z => z.rodzaj === 'F').length, nz = p.znaczniki.length - nf, nzd = p.znaczniki.reduce((s, z) => s + (z.zdjecia || []).length, 0); return `<div class="proj" data-act="proj-otworz" data-id="${esc(p.id)}">
       <div><div class="pt">${esc(p.meta.nazwa || 'Projekt bez nazwy')}</div><div class="pd">${esc([p.meta.adres, p.meta.inwestor, p.meta.nr].filter(Boolean).join(' · ') || '—')}</div></div>
-      <div class="pc"><div class="chips"><span class="chip" style="background:#e3f3f8;color:#0A6F88" title="punkty foto"><b>${nf}</b> F</span><span class="chip" style="background:#fbeee4;color:#9a3412" title="zmiany i uwagi"><b>${nz}</b> Z</span><span class="chip" title="zdjęcia"><b>${nzd}</b> zdj.</span><span class="chip" title="podkłady"><b>${p.arkusze.length}</b> pl.</span></div></div>
+      <div class="pc"><div class="chips"><span class="chip f" title="punkty foto"><b>${nf}</b> F</span><span class="chip z" title="zmiany i uwagi"><b>${nz}</b> Z</span><span class="chip" title="zdjęcia"><b>${nzd}</b> zdj.</span><span class="chip" title="podkłady"><b>${p.arkusze.length}</b> pl.</span></div></div>
       <div class="pm">ostatnio zmieniany<br>${dataCzas(p.zmieniono)}</div>
       <div class="pa"><button class="btn primary sm" data-act="proj-otworz" data-id="${esc(p.id)}">Otwórz</button><button class="x" data-act="proj-usun" data-id="${esc(p.id)}" title="Usuń projekt z tego urządzenia">×</button></div></div>`; }).join('')}</div>`
     : `<div class="pusto"><b>Nie masz jeszcze żadnego projektu</b>Utwórz projekt inwentaryzacji, wczytaj kopię z innego urządzenia albo otwórz projekt przykładowy (fikcyjna hala z podkładem DXF i PDF).<div class="btns" style="justify-content:center;margin-top:1rem"><button class="btn" data-act="demo">Projekt przykładowy</button><button class="btn primary lg" data-act="nowy-projekt">+ Nowy projekt</button></div></div>`}
   <div class="sec-h"><span>Przebieg pracy</span></div>
-  <div class="tiles">${[['1', 'Podkład', 'DXF z ZWCAD (zalecany — współrzędne i przyciąganie) albo PDF (kalibracja dwoma punktami).'], ['2', 'Zdjęcia F', 'Stuknij miejsce na planie → aparat → zdjęcie trafia do punktu. Przeciągnij, aby wskazać kierunek.'], ['3', 'Zmiany Z', 'Inny wymiar (z dalmierza), nowy element, element nie istnieje, uwaga, szkic.'], ['4', 'Eksport', 'ZIP: PDF z klikalnymi punktami, zdjęcia, zestawienia, DXF zmian (warstwy INW-*), kopia projektu.']].map(([n, t, d]) => `<div class="tile"><i>KROK ${n}</i><b>${t}</b><span>${d}</span></div>`).join('')}</div>
+  <div class="tiles">${[['1', 'Podkład', 'DXF z ZWCAD (zalecany — współrzędne i przyciąganie) albo PDF (kalibracja dwoma punktami).'], ['2', 'Zdjęcia F', 'Stuknij miejsce na planie → aparat → zdjęcie trafia do punktu. Przeciągnij, aby wskazać kierunek.'], ['3', 'Zmiany Z', 'Inny wymiar (z dalmierza), nowy element, element nie istnieje, uwaga, szkic.'], ['4', 'Eksport', 'ZIP: PDF z klikalnymi punktami, zdjęcia, zestawienia, DXF zmian (warstwy INW-*), kopia projektu.'], ['5', 'Plan docelowy', 'Biuro: import kopii na laptopie, PDF rzutu po poprawkach, kalibracja — fotodokumentacja powstaje na nim.']].map(([n, t, d]) => `<div class="tile"><i>KROK ${n}</i><b>${t}</b><span>${d}</span></div>`).join('')}</div>
   <div class="legal">Projekty, podkłady i zdjęcia są zapisywane w pamięci przeglądarki na tym urządzeniu i nie są nigdzie wysyłane. Wyczyszczenie danych witryny lub usunięcie aplikacji z ekranu początkowego usuwa projekty — po każdym dniu pracy zrób eksport (kopia projektu w ZIP). Narzędzie wspiera inwentaryzację i nie zastępuje pomiaru i oceny osoby z uprawnieniami. Zdjęcia mogą zawierać dane osobowe (osoby, tablice rejestracyjne) — fotografuj za zgodą właściciela lub zarządcy obiektu.</div></div>`;
 }
 function oknoNowegoProjektu() {
@@ -142,11 +215,14 @@ async function projektPrzykladowy() {
   toast('Projekt przykładowy: arkusz DXF jest gotowy; arkusz PDF skalibruj na osiach A/1 = 0;0 i D/13 = 144;72 m.');
 }
 
+/* nagłówek widoku jak w TEK-BIURO BUDOWY: tytuł (Fraunces) z wyróżnionym słowem, podtytuł, przyciski */
+const glowa = (t, acc, sub, akcje = '') => `<div class="page-head"><div><h1>${t}${acc ? ` <span class="acc">${acc}</span>` : ''}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${akcje ? `<div class="actions">${akcje}</div>` : ''}</div>`;
+
 /* ---------- 1. PROJEKT ---------- */
 const pole = (k, et, ph = '', typ = 'input') => `<label class="f"><span>${et}</span>${typ === 'textarea' ? `<textarea data-bind="meta.${k}" rows="3" placeholder="${esc(ph)}">${esc(S.meta[k])}</textarea>` : `<input data-bind="meta.${k}" value="${esc(S.meta[k])}" placeholder="${esc(ph)}">`}</label>`;
 function vProjekt() {
   const u = S.ustaw;
-  return `<div class="grid2"><section class="card"><h2>Dane opracowania <small>trafiają na stronę tytułową fotodokumentacji</small></h2>
+  return glowa('Dane', 'projektu', esc(S.meta.nazwa || 'projekt bez nazwy')) + `<div class="grid2"><section class="card"><h2>Dane opracowania <small>trafiają na stronę tytułową fotodokumentacji</small></h2>
     ${pole('nazwa', 'Nazwa obiektu')}${pole('adres', 'Adres / lokalizacja')}
     <div class="row">${pole('inwestor', 'Zamawiający')}${pole('nr', 'Nr opracowania')}</div>
     <div class="row">${pole('autor', 'Autor')}${pole('data', 'Data wizji')}</div>
@@ -162,17 +238,30 @@ function vProjekt() {
 }
 
 /* ---------- 2. PODKŁADY ---------- */
-function vPodklady() {
-  return `<section class="card"><h2>Podkłady <small>rzuty, na których stawiasz punkty — DXF z ZWCAD albo PDF</small></h2>
-    <div class="drop" data-act="dodaj-podklad"><b>Dodaj podkład — stuknij lub przeciągnij plik</b><br><span class="hint">DXF (zalecany): współrzędne jak w ZWCAD, przyciąganie do narożników i skrzyżowań osi, eksport zmian 1:1. PDF: każdą stronę trzeba skalibrować dwoma punktami.</span></div>
-    ${S.arkusze.length ? `<div class="plist">${S.arkusze.map(a => { const n = S.znaczniki.filter(z => z.arkuszId === a.id).length; const kal = a.typ === 'dxf' ? '<span class="stat ok">układ z pliku DXF</span>' : a.kal ? `<span class="stat ok">skalibrowany (${a.kal.tryb === 'odl' ? 'odległość' : '2 punkty'})</span>` : '<span class="stat cz">bez kalibracji</span>';
-      return `<div class="proj ark"><div><input class="arknazwa" data-ark="${a.id}" value="${esc(a.nazwa)}" aria-label="Nazwa podkładu"><div class="pd">${esc(a.zrodlo.nazwa)}${a.typ === 'pdf' ? ' · strona ' + a.zrodlo.strona : ''} · ${a.typ.toUpperCase()}</div></div>
-        <div class="pc">${kal} <span class="muted sm">${n} znaczników</span></div><div class="pm"></div>
-        <div class="pa"><button class="btn primary sm" data-act="ark-otworz" data-id="${a.id}">Plan</button>${a.typ === 'pdf' ? `<button class="btn sm" data-act="ark-kalibruj" data-id="${a.id}">Kalibruj</button>` : `<button class="btn sm" data-act="ark-warstwy" data-id="${a.id}">Warstwy</button>`}<button class="x" data-act="ark-usun" data-id="${a.id}" title="Usuń podkład">×</button></div></div>`; }).join('')}</div>`
-      : '<div class="pusto"><b>Brak podkładów</b>Przygotuj w ZWCAD czysty rzut (osie, słupy, ściany, bramy — bez kreskowań i odnośników) i zapisz jako DXF.</div>'}
-    <details><summary>Jak przygotować DXF w ZWCAD 2022</summary><ol class="steps"><li>Zrób kopię rysunku. Usuń kreskowania (HATCH), obrazy i odnośniki zewnętrzne; zamroź zbędne warstwy (meble, opisy pomieszczeń, jeśli niepotrzebne).</li><li>Polecenie <code>ZAPISZJAKO</code> → typ <b>DXF</b> (np. AutoCAD 2018 DXF). Format binarny nie jest obsługiwany.</li><li>Prześlij plik na iPada (OneDrive / iCloud Drive / AirDrop z Maca) i dodaj go tutaj.</li></ol></details></section>`;
+function wierszArkusza(a, M) {
+  const doc = docelowy(a);
+  const n = doc ? [...M.values()].filter(m => m.a.id === a.id).length : S.znaczniki.filter(z => z.arkuszId === a.id).length;
+  const kal = a.typ === 'dxf' ? '<span class="stat ok">układ z pliku DXF</span>' : a.kal ? `<span class="stat ${a.kal.tryb === 'odl' && doc ? 'cz' : 'ok'}">skalibrowany (${a.kal.tryb === 'odl' ? 'odległość' : '2 punkty'})</span>` : '<span class="stat cz">bez kalibracji</span>';
+  return `<div class="proj ark${doc ? ' doc' : ''}"><div><input class="arknazwa" data-ark="${a.id}" value="${esc(a.nazwa)}" aria-label="Nazwa podkładu"><div class="pd">${esc(a.zrodlo.nazwa)}${a.typ === 'pdf' ? ' · strona ' + a.zrodlo.strona : ''} · ${a.typ.toUpperCase()}</div></div>
+    <div class="pc">${kal} <span class="muted sm">${doc ? odm(n, 'punkt przeniesiony', 'punkty przeniesione', 'punktów przeniesionych') : odm(n, 'znacznik', 'znaczniki', 'znaczników')}${doc && a.obszar ? ' · obszar rzutu' : ''}</span></div><div class="pm"></div>
+    <div class="pa"><button class="btn primary sm" data-act="ark-otworz" data-id="${a.id}">Plan</button>${a.typ === 'pdf' ? `<button class="btn sm" data-act="ark-kalibruj" data-id="${a.id}">Kalibruj</button>` : `<button class="btn sm" data-act="ark-warstwy" data-id="${a.id}">Warstwy</button>`}<button class="btn sm" data-act="ark-rola" data-id="${a.id}" title="${doc ? 'Przenieś do podkładów roboczych' : 'Ustaw jako plan docelowy (po poprawkach)'}">${doc ? '→ roboczy' : '→ docelowy'}</button><button class="x" data-act="ark-usun" data-id="${a.id}" title="Usuń podkład">×</button></div></div>`;
 }
-async function dodajPodklad(pliki) {
+function vPodklady() {
+  const rob = S.arkusze.filter(a => !docelowy(a)), doc = S.arkusze.filter(docelowy), M = doc.length ? przydzial() : new Map();
+  return glowa('Podkłady', 'i plan docelowy', 'teren — podkłady robocze, na których stawiasz punkty · biuro — rysunek po poprawkach, na którym powstaje fotodokumentacja') + `<section class="card"><h2>Podkłady robocze <small>teren — na nich stawiasz punkty F i zmiany Z (DXF z ZWCAD albo PDF)</small></h2>
+    <div class="drop" data-act="dodaj-podklad" data-rola="roboczy"><b>Dodaj podkład roboczy — stuknij lub przeciągnij plik</b><br><span class="hint">DXF (zalecany): współrzędne jak w ZWCAD, przyciąganie do narożników i skrzyżowań osi, eksport zmian 1:1. PDF: każdą stronę trzeba skalibrować dwoma punktami; z PDF wektorowego (eksport z CAD) działa też przyciąganie.</span></div>
+    ${rob.length ? `<div class="plist">${rob.map(a => wierszArkusza(a, M)).join('')}</div>`
+      : '<div class="pusto"><b>Brak podkładów roboczych</b>Przygotuj w ZWCAD czysty rzut (osie, słupy, ściany, bramy — bez kreskowań i odnośników) i zapisz jako DXF.</div>'}
+    <details><summary>Jak przygotować DXF w ZWCAD 2022</summary><ol class="steps"><li>Zrób kopię rysunku. Usuń kreskowania (HATCH), obrazy i odnośniki zewnętrzne; zamroź zbędne warstwy (meble, opisy pomieszczeń, jeśli niepotrzebne).</li><li>Polecenie <code>ZAPISZJAKO</code> → typ <b>DXF</b> (np. AutoCAD 2018 DXF). Format binarny nie jest obsługiwany.</li><li>Prześlij plik na iPada (OneDrive / iCloud Drive / AirDrop z Maca) i dodaj go tutaj.</li></ol></details></section>
+  <section class="card"><h2>Plan docelowy <small>biuro — rysunek po poprawkach w ZWCAD; na nim powstaje fotodokumentacja</small></h2>
+    <p class="sm">Po naniesieniu zmian w ZWCAD wydrukuj rzut do PDF (jeden arkusz albo kilka arkuszy A3) i dodaj go tutaj. Każdy arkusz skalibruj <b>współrzędnymi</b> dwóch punktów w tym samym układzie co podkład roboczy (np. A/1 = 0;0 i D/13 = 144;72 m). Punkty F i zmiany ze zdjęciami przeniosą się same; obrysy zmian zostają w zestawieniu roboczym dla projektanta.</p>
+    <div class="drop" data-act="dodaj-podklad" data-rola="docelowy"><b>Dodaj plan docelowy — PDF (arkusz lub kilka arkuszy) albo DXF</b><br><span class="hint">PDF z wielu stron: zaznacz wszystkie arkusze rzutu. DXF docelowy musi mieć ten sam układ współrzędnych co roboczy (nie przesuwaj rysunku w ZWCAD).</span></div>
+    ${doc.length ? `<div class="plist">${doc.map(a => wierszArkusza(a, M)).join('')}</div>${pokrycieHtml(M)}` : ''}
+    ${S.meta.nr === 'INW-DEMO' && !doc.length ? '<div class="btns"><button class="btn" data-act="demo-docelowy">Dodaj przykładowy plan docelowy (2 arkusze A3)</button></div><p class="hint">Do nauki: kalibracja ark. 1 — A/1 = 0;0 i D/7 = 72;72 m, ark. 2 — A/7 = 72;0 i D/13 = 144;72 m.</p>' : ''}
+  </section>`;
+}
+async function dodajPodklad(pliki, rola) {
+  const doc = rola === 'docelowy', rolaPole = doc ? { rola: 'docelowy' } : {};
   for (const f of pliki) {
     const nazwa = f.name || 'podklad', rozsz = nazwa.toLowerCase().split('.').pop();
     try {
@@ -180,29 +269,29 @@ async function dodajPodklad(pliki) {
         toast(`Wczytuję ${nazwa}…`); await czekaj(30);
         const buf = await f.arrayBuffer(); const test = Dxf.wczytaj(buf); // sprawdzenie, zanim zapiszemy
         const id = await Baza.zapiszPlik(S.id, f, nazwa);
-        const a = { id: uid('a'), nazwa: nazwa.replace(/\.dxf$/i, ''), typ: 'dxf', zrodlo: { plikId: id, nazwa, strona: 1 }, kal: null, warstwyWid: null, widok: null };
+        const a = { id: uid('a'), nazwa: nazwa.replace(/\.dxf$/i, ''), typ: 'dxf', zrodlo: { plikId: id, nazwa, strona: 1 }, kal: null, warstwyWid: null, widok: null, ...rolaPole };
         S.arkusze.push(a); R.delete(a.id);
         toast(`Dodano DXF: ${test.grupy.reduce((s, g) => s + g.linie.length, 0)} linii, ${test.teksty.length} tekstów, jednostka: ${test.jednostki}, kodowanie: ${test.kodowanie}.`);
       } else if (rozsz === 'pdf') {
         toast(`Wczytuję ${nazwa}…`);
-        const buf = await f.arrayBuffer(); const tmpId = uid('t'); const doc = await PdfPodklad.otworz(tmpId, buf);
+        const buf = await f.arrayBuffer(); const tmpId = uid('t'); const pdf = await PdfPodklad.otworz(tmpId, buf);
         let strony = [1];
-        if (doc.numPages > 1) strony = await wyborStron(doc, nazwa); PdfPodklad.zamknij(tmpId);
+        if (pdf.numPages > 1) strony = await wyborStron(pdf, nazwa, doc); PdfPodklad.zamknij(tmpId);
         if (!strony || !strony.length) continue;
         const id = await Baza.zapiszPlik(S.id, f, nazwa);
-        for (const s of strony) S.arkusze.push({ id: uid('a'), nazwa: nazwa.replace(/\.pdf$/i, '') + (doc.numPages > 1 ? ` — str. ${s}` : ''), typ: 'pdf', zrodlo: { plikId: id, nazwa, strona: s }, kal: null, widok: null });
-        toast(`Dodano PDF (${strony.length} ${strony.length === 1 ? 'strona' : 'strony'}). Skalibruj podkład, aby mierzyć i eksportować w układzie rysunku.`);
+        for (const s of strony) S.arkusze.push({ id: uid('a'), nazwa: nazwa.replace(/\.pdf$/i, '') + (pdf.numPages > 1 ? ` — ${doc ? 'ark.' : 'str.'} ${s}` : ''), typ: 'pdf', zrodlo: { plikId: id, nazwa, strona: s }, kal: null, widok: null, ...rolaPole });
+        toast(doc ? `Dodano plan docelowy (${strony.length} ${strony.length === 1 ? 'arkusz' : 'arkusze'}). Skalibruj każdy arkusz współrzędnymi dwóch punktów — wtedy przeniosą się na niego punkty zdjęć.` : `Dodano PDF (${strony.length} ${strony.length === 1 ? 'strona' : 'strony'}). Skalibruj podkład, aby mierzyć i eksportować w układzie rysunku.`);
       } else toast(`Plik „${nazwa}” — obsługiwane są tylko DXF i PDF.`, true);
     } catch (e) { console.error(e); toast(`Nie udało się dodać „${nazwa}”: ${e.message || e}`, true); }
   }
   zapisz(true); if (!arkId && S.arkusze.length) arkId = S.arkusze[0].id; render();
 }
-async function wyborStron(doc, nazwa) {
+async function wyborStron(doc, nazwa, wszystkie) {
   const n = doc.numPages; const info = [];
   for (let i = 1; i <= Math.min(n, 60); i++) { const p = await doc.getPage(i); const w = PdfPodklad.wymiary(p); info.push(`${Math.round(w.w * 25.4 / 72)}×${Math.round(w.h * 25.4 / 72)} mm`); }
   let wynik = null;
   await okno(`<h2>${esc(nazwa)} — ${n} stron</h2><p class="hint">Zaznacz strony, które mają być podkładami (np. rzuty). Każda strona będzie osobnym planem.</p>
-    <div class="strony">${info.map((t, i) => `<label class="chk"><input type="checkbox" value="${i + 1}"${i === 0 ? ' checked' : ''}> Strona ${i + 1} <span class="muted sm">${t}</span></label>`).join('')}</div>
+    <div class="strony">${info.map((t, i) => `<label class="chk"><input type="checkbox" value="${i + 1}"${i === 0 || wszystkie ? ' checked' : ''}> Strona ${i + 1} <span class="muted sm">${t}</span></label>`).join('')}</div>
     <div class="btns right"><button class="btn" data-w="anuluj">Anuluj</button><button class="btn primary" data-w="ok">Dodaj zaznaczone</button></div>`, 'waski', (d) => {
     d.addEventListener('click', (e) => { if (e.target.closest('[data-w=ok]')) wynik = $$('.strony input:checked', d).map(x => +x.value); }, true);
   });
@@ -237,10 +326,11 @@ function vPlan() {
     <nav class="narz" id="narz">${NARZ.map(([id, n, opis, sv]) => `<button class="nb${id === 'przegladaj' ? ' on' : ''}" data-narz="${id}" title="${esc(opis)}">${ikona(sv)}<span>${n}</span></button>`).join('')}</nav>
     <div class="planmid">
       <div class="planbar">
-        <select id="arkSel" aria-label="Podkład">${S.arkusze.map(x => `<option value="${x.id}"${x.id === a.id ? ' selected' : ''}>${esc(x.nazwa)}</option>`).join('')}</select>
+        <select id="arkSel" aria-label="Podkład">${(() => { const op = (x) => `<option value="${x.id}"${x.id === a.id ? ' selected' : ''}>${esc(x.nazwa)}</option>`, rob = S.arkusze.filter(x => !docelowy(x)), doc = S.arkusze.filter(docelowy);
+          return doc.length ? `<optgroup label="Podkłady robocze (teren)">${rob.map(op).join('')}</optgroup><optgroup label="Plan docelowy (po poprawkach)">${doc.map(op).join('')}</optgroup>` : rob.map(op).join(''); })()}</select>
         <button class="btn sm" data-act="plan-dopasuj" title="Pokaż cały rysunek">Cały rysunek</button>
         <span class="sep"></span>
-        <label class="tg" id="tgSnap" title="Przyciąganie do narożników, końców i skrzyżowań linii (tylko DXF)"><input type="checkbox" id="opSnap" checked><span>Przyciąganie</span></label>
+        <label class="tg" id="tgSnap" title="Przyciąganie do narożników, końców i skrzyżowań linii (DXF i PDF wektorowy)"><input type="checkbox" id="opSnap" checked><span>Przyciąganie</span></label>
         <label class="tg" title="Linie poziome i pionowe w układzie rysunku"><input type="checkbox" id="opOrto"><span>Orto</span></label>
         <label class="tg" title="Palec tylko przesuwa i powiększa plan; punkty stawia rysik"><input type="checkbox" id="opPalec"><span>Rysik rysuje</span></label>
         <label class="tg" id="tgKolory" title="Kolory warstw DXF"><input type="checkbox" id="opKolory"><span>Kolory</span></label>
@@ -248,6 +338,8 @@ function vPlan() {
         <button class="btn sm" data-act="cofnij" title="Cofnij ostatnią zmianę (Ctrl+Z)">Cofnij</button>
         <button class="btn sm" data-act="ark-kalibruj-plan" id="btnKal">Kalibruj</button>
         <button class="btn sm" data-act="ark-warstwy-plan" id="btnWar">Warstwy</button>
+        <button class="btn sm" data-act="ark-obszar" id="btnObszar" title="Prostokąt, w którym leży rzut (bez tabelki rysunkowej i legendy) — tylko tam trafiają punkty">Obszar rzutu</button>
+        <button class="btn sm" data-act="ark-obszar-usun" id="btnObszarX" title="Usuń obszar rzutu — punkty trafiają na cały arkusz">× obszar</button>
         <span class="status" id="status"></span>
       </div>
       <div class="planhost" id="planHost"></div>
@@ -267,7 +359,8 @@ async function montujPlan() {
     opisOdcinka: (p, q) => { const r = rArk(); if (!r || !r.T) return ''; return `${naUz(Geom.odl(swiatMm(r, p), swiatMm(r, q)))} ${jedn()}`; },
     formatWym: (z) => Eksport.opisWymiaru(z, S, R, true),
     zUzytkownika: (v) => { const r = rArk(); return zUzNaMm(v) / (r ? r.k : 1); },
-    naRysik: () => { $('#opPalec').checked = true; toast('Wykryto rysik: od teraz rysik stawia punkty, a palec przesuwa plan. Zmienisz to przełącznikiem „Rysik rysuje”.'); }
+    naRysik: () => { $('#opPalec').checked = true; toast('Wykryto rysik: od teraz rysik stawia punkty, a palec przesuwa plan. Zmienisz to przełącznikiem „Rysik rysuje”.'); },
+    naPrzesun: przesunZnacznik, naObszar: ustawObszar
   });
   planZamontowany = true;
   $('#arkSel').onchange = (e) => { arkId = e.target.value; S.ostatniArkusz = arkId; zapisz(); pokazArkusz(); };
@@ -282,21 +375,37 @@ async function pokazArkusz() {
   const a = S.arkusze.find(x => x.id === arkId); if (!a) return;
   status('Wczytuję podkład…');
   try {
+    const doc = docelowy(a);
+    if (doc) await zapewnijTransformacje();
     const r = await przygotujArkusz(a);
     if (tab !== 'plan' || arkId !== a.id) return;
-    Plan.ustawArkusz(r, S.znaczniki.filter(z => z.arkuszId === a.id), a.widok);
-    $('#btnKal').style.display = a.typ === 'pdf' ? '' : 'none'; $('#btnWar').style.display = a.typ === 'dxf' ? '' : 'none'; $('#tgKolory').style.display = a.typ === 'dxf' ? '' : 'none'; $('#tgSnap').style.display = a.typ === 'dxf' ? '' : 'none';
-    status(a.typ === 'pdf' && !a.kal ? 'PDF bez kalibracji — punkty i zdjęcia działają; wymiary i eksport DXF po kalibracji.' : '');
-    if (a.typ === 'pdf' && !a.kal) toast('Ten PDF nie jest skalibrowany. Kalibracja: przycisk „Kalibruj” i dwa punkty o znanych współrzędnych.', false, { tekst: 'Kalibruj teraz', fn: () => rozpocznijKalibracje(a.id) });
+    const zn = znacznikiArkusza(a);
+    Plan.ustawArkusz(r, zn, a.widok);
+    const pok = (sel, v) => { const el = $(sel); if (el) el.style.display = v ? '' : 'none'; };
+    pok('#btnKal', a.typ === 'pdf'); pok('#btnWar', a.typ === 'dxf'); pok('#tgKolory', a.typ === 'dxf'); pok('#tgSnap', a.typ === 'dxf' || !!r.snap);
+    pok('#btnObszar', doc); pok('#btnObszarX', doc && !!a.obszar);
+    // plan docelowy: tylko przeglądanie, przesuwanie punktów i pomiar — znaczniki powstają w terenie na podkładzie roboczym
+    const dozw = doc ? ['przegladaj', 'przesunZn', 'pomiar'] : null;
+    $$('#narz .nb').forEach(b => { b.style.display = !dozw || dozw.includes(b.dataset.narz) ? '' : 'none'; });
+    if (dozw && !dozw.includes(narzBiez)) narzBiez = 'przegladaj';
+    if (a.typ === 'pdf' && r.snap === undefined && r.page) { // punkty przyciągania z wektorowego PDF — liczone raz, w tle
+      r.snap = null;
+      PdfPodklad.punktySnap(r.page).then(sn => { r.snap = sn.ile > 20 ? sn.indeks : null; r.snapIle = sn.ile; const t = $('#tgSnap'); if (t && arkId === a.id) { t.style.display = r.snap ? '' : 'none'; t.title = r.snap ? `Przyciąganie do ${sn.ile} punktów rysunku wektorowego (narożniki, końce linii, skrzyżowania)${sn.pelny ? ' — limit, część pominięta' : ''}` : t.title; } })
+        .catch(e => console.warn('Przyciąganie PDF:', e));
+    }
+    if (doc) status(!Tark(a) ? 'Plan docelowy bez kalibracji — skalibruj go współrzędnymi dwóch punktów, a punkty zdjęć przeniosą się same.' : `Plan docelowy: ${zn.length} punktów przeniesionych z podkładów roboczych. Narzędzie „Przesuń” poprawia położenie tylko na tym planie.`);
+    else status(a.typ === 'pdf' && !a.kal ? 'PDF bez kalibracji — punkty i zdjęcia działają; wymiary i eksport DXF po kalibracji.' : '');
+    if (a.typ === 'pdf' && !a.kal) toast(doc ? 'Skalibruj plan docelowy: dwa punkty o znanych współrzędnych w tym samym układzie co podkład roboczy (np. A/1 i D/13).' : 'Ten PDF nie jest skalibrowany. Kalibracja: przycisk „Kalibruj” i dwa punkty o znanych współrzędnych.', false, { tekst: 'Kalibruj teraz', fn: () => rozpocznijKalibracje(a.id) });
   } catch (e) { console.error(e); status(''); toast('Nie udało się wyświetlić podkładu: ' + (e.message || e), true); }
   wybierzNarzedzie(narzBiez); odswiezPanel();
 }
-function odswiezPlan() { if (tab !== 'plan' || !planZamontowany) return; Plan.znaczniki(S.znaczniki.filter(z => z.arkuszId === arkId)); Plan.zaznacz(wybrany); odswiezPanel(); const b = $('.tab[data-tab=lista]'); if (b) b.innerHTML = '4. Zestawienie' + (S.znaczniki.length ? ` <span class="badge">${S.znaczniki.length}</span>` : ''); }
+const arkBiez = () => S.arkusze.find(x => x.id === arkId);
+function odswiezPlan() { if (tab !== 'plan' || !planZamontowany) return; Plan.znaczniki(znacznikiArkusza(arkBiez())); Plan.zaznacz(wybrany); odswiezPanel(); const b = $('.tab[data-tab=lista]'); if (b) b.innerHTML = '4. Zestawienie' + (S.znaczniki.length ? ` <span class="badge">${S.znaczniki.length}</span>` : ''); }
 function status(t) { const s = $('#status'); if (s) s.textContent = t || ''; }
 function wybierzNarzedzie(n) {
   narzBiez = n; kalibracjaArk = null; $$('#narz .nb').forEach(b => b.classList.toggle('on', b.dataset.narz === n));
   Plan.narzedzie(n, podtrybBiez); odswiezWpis();
-  const opisy = { przegladaj: 'Przesuwaj jednym palcem, powiększaj dwoma. Stuknij znacznik, aby go wybrać.', foto: 'Stuknij miejsce zdjęcia. Przeciągnij od miejsca w stronę, w którą patrzy aparat — zapisze się kierunek.', wymiar: 'Wskaż dwa punkty elementu (palcem: celownik nad palcem, punkt po oderwaniu). Potem wpisz wynik z dalmierza.', nowy: 'Wskaż punkty nowego elementu albo wpisz współrzędne w polu na dole.', brak: 'Obrysuj element, którego nie ma na obiekcie.', uwaga: 'Wskaż miejsce uwagi, opis dodasz w panelu.', szkic: 'Rysuj palcem lub rysikiem. Szkic nie jest pomiarem.', pomiar: 'Wskaż dwa punkty — długość pokaże się na pasku (nic się nie zapisuje).' };
+  const opisy = { przesunZn: docelowy(arkBiez()) ? 'Przeciągnij punkt w poprawne miejsce. Zmiana dotyczy tylko planu docelowego — położenie z terenu zostaje.' : 'Przeciągnij znacznik w poprawne miejsce (wszystkie jego punkty przesuną się razem).', przegladaj: 'Przesuwaj jednym palcem, powiększaj dwoma. Stuknij znacznik, aby go wybrać.', foto: 'Stuknij miejsce zdjęcia. Przeciągnij od miejsca w stronę, w którą patrzy aparat — zapisze się kierunek.', wymiar: 'Wskaż dwa punkty elementu (palcem: celownik nad palcem, punkt po oderwaniu). Potem wpisz wynik z dalmierza.', nowy: 'Wskaż punkty nowego elementu albo wpisz współrzędne w polu na dole.', brak: 'Obrysuj element, którego nie ma na obiekcie.', uwaga: 'Wskaż miejsce uwagi, opis dodasz w panelu.', szkic: 'Rysuj palcem lub rysikiem. Szkic nie jest pomiarem.', pomiar: 'Wskaż dwa punkty — długość pokaże się na pasku (nic się nie zapisuje).' };
   status(opisy[n] || '');
 }
 function odswiezWpis() {
@@ -307,6 +416,7 @@ function odswiezWpis() {
   if (punktowe && !kalibracjaArk) h += r && r.T ? `<input id="wpisPole" class="wpisPole" placeholder="punkt z klawiatury: x;y  ·  @dx;dy  ·  @długość<kąt  [${jedn()}]" autocomplete="off" autocapitalize="off" spellcheck="false"><button class="btn sm" data-act="wpis-ok">Dodaj punkt</button>` : (a && a.typ === 'pdf' ? '<span class="hint">Wpisywanie współrzędnych — po kalibracji podkładu.</span>' : '');
   if (st.punkty) h += `<button class="btn sm" data-act="punkt-cofnij">Cofnij punkt</button>`;
   if ((st.narz === 'nowy' || st.narz === 'brak') && st.podtryb === 'polilinia' && st.punkty >= 2) h += `<button class="btn sm primary" data-act="pl-zakoncz">Zakończ</button>${st.punkty >= 3 ? '<button class="btn sm" data-act="pl-zamknij">Zamknij obrys</button>' : ''}`;
+  if (st.narz === 'obszar') h += `<span class="hint"><b>Obszar rzutu:</b> wskaż dwa przeciwległe narożniki prostokąta, w którym leży rzut (bez tabelki rysunkowej i legendy).</span><button class="btn sm" data-act="kal-anuluj">Anuluj</button>`;
   if (kalibracjaArk) h += `<span class="hint"><b>Kalibracja:</b> wskaż punkt ${st.punkty + 1} z 2 (np. skrzyżowanie osi). Dokładność kalibracji = dokładność wszystkich wymiarów.</span><button class="btn sm" data-act="kal-anuluj">Anuluj</button>`;
   w.innerHTML = h; w.style.display = h ? '' : 'none';
   const pole = $('#wpisPole'); if (pole) pole.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); wpiszPunkt(); } };
@@ -317,16 +427,38 @@ function wpiszPunkt() { const p = $('#wpisPole'); if (!p) return; try { Plan.wpi
 /* --- tworzenie znaczników --- */
 const pad = (n, d) => String(n).padStart(d, '0');
 function utworzFoto(pos, kier) {
+  if (docelowy(arkBiez())) return toast('Na planie docelowym nie dodaje się znaczników — stawiasz je w terenie na podkładzie roboczym.', true);
   migawka();
   const z = { id: uid('m'), nr: 'F-' + pad(S.seqF++, 3), rodzaj: 'F', arkuszId: arkId, geom: { typ: 'punkt', pkt: [pos] }, kier: kier ?? null, element: '', kategoria: '', opis: '', zdjecia: [], utw: Date.now(), zm: Date.now() };
   S.znaczniki.push(z); wybrany = z.id; zapisz(true); odswiezPlan();
   if (S.ustaw.aparatOdRazu) zrobZdjecie(z.id, true);
 }
 function utworzZmiane({ typZ, geom }) {
+  if (docelowy(arkBiez())) return toast('Na planie docelowym nie dodaje się znaczników — stawiasz je w terenie na podkładzie roboczym.', true);
   migawka();
   const z = { id: uid('m'), nr: 'Z-' + pad(S.seqZ++, 2), rodzaj: 'Z', typZ, arkuszId: arkId, geom, kier: null, element: '', kategoria: '', opis: '', zrodlo: typZ === 'wymiar' ? 'P' : 'O', wymPom: null, zdjecia: [], utw: Date.now(), zm: Date.now() };
   S.znaczniki.push(z); wybrany = z.id; zapisz(true); odswiezPlan();
   if (typZ === 'wymiar') { const p = $('#zPom'); if (p) p.focus(); }
+}
+
+/* --- przesunięcie znacznika (narzędzie „Przesuń”) i obszar rzutu --- */
+function przesunZnacznik(id, d) {
+  const a = arkBiez(), z = S.znaczniki.find(x => x.id === id); if (!a || !z) return;
+  migawka();
+  if (docelowy(a)) { // tylko położenie na tym arkuszu docelowym; dane z terenu bez zmian
+    const m = przydzial().get(id); if (!m || m.a.id !== a.id) return;
+    z.przes = { ...(z.przes || {}), [a.id]: [m.p[0] + d[0], m.p[1] + d[1]] };
+  } else z.geom.pkt = z.geom.pkt.map(q => [q[0] + d[0], q[1] + d[1]]);
+  z.zm = Date.now(); wybrany = z.id; zapisz(true); odswiezPlan();
+  const T = Tark(a); if (T) toast(`${z.nr}: przesunięto o ${naUz(Math.hypot(d[0], d[1]) * Geom.skala(T) * kArk(a))} ${jedn()}${docelowy(a) ? ' (tylko na planie docelowym)' : ''}.`, false, { tekst: 'Cofnij', fn: cofnij });
+}
+function ustawObszar(pk) {
+  const a = arkBiez(), r = rArk(); if (!a) return;
+  const o = [Math.min(pk[0][0], pk[1][0]), Math.min(pk[0][1], pk[1][1]), Math.max(pk[0][0], pk[1][0]), Math.max(pk[0][1], pk[1][1])];
+  if (o[2] - o[0] < 1e-6 || o[3] - o[1] < 1e-6) return toast('Obszar musi być prostokątem — wskaż dwa przeciwległe narożniki.', true);
+  a.obszar = o; if (r) r.obszar = o; zapisz(true);
+  wybierzNarzedzie('przegladaj'); odswiezPlan(); const x = $('#btnObszarX'); if (x) x.style.display = '';
+  toast(`Zapisano obszar rzutu. Na tym arkuszu: ${znacznikiArkusza(a).length} punktów.`);
 }
 
 /* --- kalibracja PDF --- */
@@ -338,9 +470,10 @@ function rozpocznijKalibracje(id) {
 }
 async function dokonczKalibracje(pk) {
   const a = S.arkusze.find(x => x.id === kalibracjaArk); if (!a) return;
-  const k0 = a.kal || {}, j = jedn();
+  const k0 = a.kal || {}, j = jedn(), doc = docelowy(a);
   const w = await okno(`<form id="kalForm"><h2>Kalibracja — ${esc(a.nazwa)}</h2>
-    <div class="seg" id="kalTryb"><label class="on"><input type="radio" name="tryb" value="wsp" checked>Współrzędne obu punktów</label><label><input type="radio" name="tryb" value="odl">Znana odległość</label></div>
+    ${doc ? `<p class="hint"><b>Plan docelowy:</b> wpisz współrzędne w <b>tym samym układzie</b>, w którym skalibrowany jest podkład roboczy (dla DXF — układ z ZWCAD). Od tego zależy, czy punkty zdjęć trafią w swoje miejsca.</p><input type="hidden" name="tryb" value="wsp">`
+      : '<div class="seg" id="kalTryb"><label class="on"><input type="radio" name="tryb" value="wsp" checked>Współrzędne obu punktów</label><label><input type="radio" name="tryb" value="odl">Znana odległość</label></div>'}
     <div id="kalWsp"><p class="hint">Wpisz współrzędne wskazanych punktów w układzie rysunku z ZWCAD (np. przecięcia osi A/1 i D/13). Jednostka: ${j}.</p>
       <div class="row"><label class="f"><span>Punkt 1 — X [${j}]</span><input name="x1" inputmode="decimal" value="${k0.wsp ? naUz(k0.wsp[0][0]) : '0'}"></label><label class="f"><span>Punkt 1 — Y [${j}]</span><input name="y1" inputmode="decimal" value="${k0.wsp ? naUz(k0.wsp[0][1]) : '0'}"></label></div>
       <div class="row"><label class="f"><span>Punkt 2 — X [${j}]</span><input name="x2" inputmode="decimal" value="${k0.wsp ? naUz(k0.wsp[1][0]) : ''}"></label><label class="f"><span>Punkt 2 — Y [${j}]</span><input name="y2" inputmode="decimal" value="${k0.wsp ? naUz(k0.wsp[1][1]) : ''}"></label></div></div>
@@ -364,9 +497,9 @@ async function dokonczKalibracje(pk) {
   if (w === 'ok') {
     const r = R.get(a.id); if (r) ustawKalibracje(r, a); zapisz(true);
     const skalaPapier = Geom.skala(a.kal.T) / (25.4 / 72); // mm świata na mm papieru
-    toast(`Zapisano kalibrację. Skala podkładu ≈ 1:${Math.round(skalaPapier)}. Sprawdź narzędziem „Pomiar” znany wymiar (np. rozstaw osi).`);
+    toast(`Zapisano kalibrację. Skala podkładu ≈ 1:${Math.round(skalaPapier)}.${doc ? ` Przeniesiono ${znacznikiArkusza(a).length} punktów na ten arkusz.` : ''} Sprawdź narzędziem „Pomiar” znany wymiar (np. rozstaw osi).`);
   }
-  wybierzNarzedzie('przegladaj');
+  wybierzNarzedzie('przegladaj'); odswiezPlan();
 }
 
 /* --- panel właściwości znacznika --- */
@@ -374,22 +507,23 @@ function odswiezPanel() {
   const p = $('#panel'); if (!p) return;
   const z = S.znaczniki.find(x => x.id === wybrany);
   if (!z) {
-    const naArk = S.znaczniki.filter(x => x.arkuszId === arkId);
-    p.innerHTML = `<h2>Znaczniki na tym planie</h2><p class="sm">${naArk.filter(x => x.rodzaj === 'F').length} punktów foto · ${naArk.filter(x => x.rodzaj === 'Z').length} zmian/uwag</p>
+    const naArk = znacznikiArkusza(arkBiez());
+    p.innerHTML = `<h2>Znaczniki na tym planie</h2>${docelowy(arkBiez()) ? '<p class="hint">Plan docelowy pokazuje punkty F i zmiany ze zdjęciami przeniesione z podkładów roboczych. Obrysy zmian są w zestawieniu roboczym (eksport).</p>' : ''}<p class="sm">${naArk.filter(x => x.rodzaj === 'F').length} punktów foto · ${naArk.filter(x => x.rodzaj === 'Z').length} zmian/uwag</p>
       <p class="hint">Stuknij znacznik na planie (narzędzie „Przeglądaj”), aby zobaczyć i edytować jego dane i zdjęcia.</p>
       <div class="ostatnie">${naArk.slice(-8).reverse().map(x => `<button class="rf" data-act="znacznik-pokaz" data-id="${x.id}"><div><b style="color:${kolorZ(x)}">${x.nr}</b> <span>${esc(x.element || opisRodzaju(x))}</span></div><span>${(x.zdjecia || []).length} zdj.</span></button>`).join('')}</div>
       <h3>Skróty (klawiatura)</h3><p class="hint">Esc — przerwij · Enter — zakończ polilinię · Ctrl+Z — cofnij · F3 — przyciąganie · F8 — orto</p>`;
     p.classList.remove('on'); return;
   }
   p.classList.add('on');
-  const r = rArk(z.arkuszId), kal = r && r.T;
+  const aB = arkBiez(), wirt = docelowy(aB) && z.arkuszId !== aB.id, mP = wirt ? przydzial().get(z.id) : null, zrodlo = S.arkusze.find(x => x.id === z.arkuszId);
+  const r = rArk(z.arkuszId), kal = r && r.T && !wirt;
   const wsp = kal ? z.geom.pkt.map(q => swiatMm(r, q)) : null;
   const rys = z.typZ === 'wymiar' ? Eksport.wymRysMm(z, R) : NaN;
   p.innerHTML = `<div class="ph"><b style="color:${kolorZ(z)}">${z.nr}</b><span>${esc(opisRodzaju(z))}</span><button class="x" data-act="panel-zamknij" title="Zamknij panel">×</button></div>
     ${z.rodzaj === 'Z' ? `<label class="f"><span>Rodzaj zmiany</span><select data-zm="typZ">${Object.entries(Eksport.TYPY).map(([k, t]) => `<option value="${k}"${z.typZ === k ? ' selected' : ''}>${t}</option>`).join('')}</select></label>` : ''}
     <label class="f"><span>Element (oznaczenie)</span><input data-zm="element" value="${esc(z.element)}" placeholder="np. SŁ-C/4, brama B-07, dok D-03"></label>
     <label class="f"><span>Kategoria</span><select data-zm="kategoria"><option value="">—</option>${KATEGORIE.map(k => `<option${z.kategoria === k ? ' selected' : ''}>${esc(k)}</option>`).join('')}</select></label>
-    ${z.typZ === 'wymiar' ? `<div class="wym"><div><span>Z rysunku</span><b>${Number.isFinite(rys) ? naUz(rys) + ' ' + jedn() : (kal ? '—' : 'brak kalibracji')}</b></div>
+    ${z.typZ === 'wymiar' ? `<div class="wym"><div><span>Z rysunku</span><b>${Number.isFinite(rys) ? naUz(rys) + ' ' + jedn() : (kal || wirt ? '—' : 'brak kalibracji')}</b></div>
       <label><span>Pomiar (dalmierz) [${jedn()}]</span><input id="zPom" data-zm="wymPom" inputmode="decimal" value="${Number.isFinite(z.wymPom) ? naUz(z.wymPom) : ''}" placeholder="${jedn() === 'm' ? 'np. 5,985' : 'np. 5985'}"></label>
       <div><span>Różnica</span><b class="${Number.isFinite(rys) && Number.isFinite(z.wymPom) && Math.abs(z.wymPom - rys) > 20 ? 'err' : ''}">${Number.isFinite(rys) && Number.isFinite(z.wymPom) ? (z.wymPom - rys >= 0 ? '+' : '−') + liczba(Math.abs(z.wymPom - rys), 0) + ' mm' : '—'}</b></div></div>` : ''}
     ${z.rodzaj === 'Z' ? `<label class="f"><span>Źródło informacji</span><select data-zm="zrodlo"><option value="P"${z.zrodlo === 'P' ? ' selected' : ''}>P — pomiar</option><option value="O"${z.zrodlo === 'O' ? ' selected' : ''}>O — oględziny</option><option value="D"${z.zrodlo === 'D' ? ' selected' : ''}>D — dokumentacja archiwalna</option><option value="N"${z.zrodlo === 'N' ? ' selected' : ''}>N — nieustalone</option></select></label>` : ''}
@@ -397,13 +531,15 @@ function odswiezPanel() {
     <h3>Zdjęcia (${(z.zdjecia || []).length})</h3>
     <div class="miniatury" id="miniatury">${(z.zdjecia || []).map((id, i) => `<button class="mini" data-act="zdj-pokaz" data-id="${id}" data-z="${z.id}" title="${z.nr}/${i + 1}"><img alt="${z.nr}/${i + 1}" data-mini="${id}"><span>${i + 1}</span></button>`).join('')}</div>
     <div class="btns"><button class="btn primary" data-act="zdj-aparat" data-id="${z.id}">Zrób zdjęcie</button><button class="btn" data-act="zdj-galeria" data-id="${z.id}">Z galerii…</button></div>
-    ${z.rodzaj === 'F' ? `<h3>Kierunek zdjęcia</h3><div class="btns"><button class="btn sm" data-act="kier-ustaw" data-id="${z.id}">Wskaż na planie</button>${z.kier !== null ? `<button class="btn sm" data-act="kier-usun" data-id="${z.id}">Usuń kierunek</button>` : ''}</div>` : ''}
+    ${z.rodzaj === 'F' && !wirt ? `<h3>Kierunek zdjęcia</h3><div class="btns"><button class="btn sm" data-act="kier-ustaw" data-id="${z.id}">Wskaż na planie</button>${z.kier !== null ? `<button class="btn sm" data-act="kier-usun" data-id="${z.id}">Usuń kierunek</button>` : ''}</div>` : ''}
     ${kal ? `<details${z.typZ === 'nowy' ? ' open' : ''}><summary>Współrzędne punktów [${jedn()}]</summary><div class="wspl">${wsp.map((w, i) => `<div class="fr"><span class="muted sm">${i + 1}</span><input data-wsp="${i}" data-os="0" inputmode="decimal" value="${naUz(w[0])}" aria-label="X ${i + 1}"><input data-wsp="${i}" data-os="1" inputmode="decimal" value="${naUz(w[1])}" aria-label="Y ${i + 1}"></div>`).join('')}</div><p class="hint">Zmiana liczby przesuwa punkt dokładnie w to miejsce.</p></details>` : ''}
+    ${wirt ? `<div class="card sm info-doc"><b>Punkt przeniesiony</b> z podkładu roboczego „${esc(zrodlo ? zrodlo.nazwa : '?')}” ${mP && mP.przes ? '— <b>położenie poprawione ręcznie</b> na tym planie.' : 'przez współrzędne rysunku (kalibracja obu podkładów).'} Jeśli nie trafia w swoje miejsce, przeciągnij go narzędziem „Przesuń” — dane z terenu się nie zmienią.</div>` : ''}
     <p class="hint">Utworzono ${dataCzas(z.utw)}</p>
-    <div class="btns"><button class="btn sm" data-act="znacznik-pokaz" data-id="${z.id}">Pokaż na planie</button><button class="btn sm danger" data-act="znacznik-usun" data-id="${z.id}">Usuń ${z.nr}</button></div>`;
+    <div class="btns">${wirt ? `${mP && mP.przes ? `<button class="btn sm" data-act="przywroc-polozenie" data-id="${z.id}">Przywróć położenie z kalibracji</button>` : ''}<button class="btn sm" data-act="znacznik-pokaz" data-rob="1" data-id="${z.id}">Pokaż na podkładzie roboczym</button>`
+      : `<button class="btn sm" data-act="znacznik-pokaz" data-id="${z.id}">Pokaż na planie</button><button class="btn sm danger" data-act="znacznik-usun" data-id="${z.id}">Usuń ${z.nr}</button>`}</div>`;
   wczytajMiniatury();
 }
-const kolorZ = (z) => z.rodzaj === 'F' ? '#0A8FB0' : ({ wymiar: '#c2410c', nowy: '#15803d', brak: '#b91c1c', uwaga: '#7c3aed', szkic: '#57534e' }[z.typZ] || '#444');
+const kolorZ = (z) => z.rodzaj === 'F' ? '#5fd3ee' : ({ wymiar: '#f6a56b', nowy: '#6fcf8e', brak: '#f09595', uwaga: '#b9a2f5', szkic: '#b9c3d6' }[z.typZ] || '#b9c3d6'); // na granatowym tle; na rysunku i w PDF — mocne odcienie
 const opisRodzaju = (z) => z.rodzaj === 'F' ? 'punkt fotograficzny' : (Eksport.TYPY[z.typZ] || 'zmiana').toLowerCase();
 async function wczytajMiniatury() {
   for (const img of $$('img[data-mini]')) {
@@ -417,7 +553,7 @@ function zmienPole(z, k, val) {
   else z[k] = val;
   z.zm = Date.now(); zapisz();
   if (k === 'wymPom' || k === 'typZ') { Plan.planuj(); if (k === 'typZ') odswiezPanel(); else { const r = Eksport.wymRysMm(z, R); const b = $('.wym div:last-child b'); if (b) b.textContent = Number.isFinite(r) && Number.isFinite(z.wymPom) ? (z.wymPom - r >= 0 ? '+' : '−') + liczba(Math.abs(z.wymPom - r), 0) + ' mm' : '—'; } }
-  Plan.znaczniki(S.znaczniki.filter(x => x.arkuszId === arkId));
+  Plan.znaczniki(znacznikiArkusza(arkBiez()));
 }
 function zmienWspolrzedna(z, i, os, val) {
   const r = rArk(z.arkuszId); const v = parsujLiczbe(val); if (!r || !r.T || !Number.isFinite(v)) return toast('Wpisz liczbę.', true);
@@ -469,27 +605,38 @@ function vLista() {
   const lista = S.znaczniki.filter(z => (!filtrListy.rodzaj || (filtrListy.rodzaj === 'F' ? z.rodzaj === 'F' : z.typZ === filtrListy.rodzaj)) && (!q || [z.nr, z.element, z.opis, z.kategoria].join(' ').toLowerCase().includes(q)))
     .sort((a, b) => a.nr.localeCompare(b.nr, 'pl', { numeric: true }));
   const ark = (id) => (S.arkusze.find(a => a.id === id) || {}).nazwa || '';
-  return `<section class="card"><h2>Zestawienie znaczników <small>${S.znaczniki.length} pozycji</small></h2>
+  const sDoc = S.arkusze.some(docelowy), M = sDoc ? przydzial() : null;
+  const kolDoc = (z) => !sDoc ? '' : `<td>${M.has(z.id) ? esc(M.get(z.id).a.nazwa) : doPokazania(z) ? '<span class="err">poza planem</span>' : '<span class="muted">—</span>'}</td>`;
+  return glowa('Zestawienie', 'znaczników', `${odm(S.znaczniki.length, 'pozycja', 'pozycje', 'pozycji')} · kliknij wiersz, aby pokazać znacznik na planie`) + `<section class="card"><h2>Znaczniki <small>${odm(S.znaczniki.length, 'pozycja', 'pozycje', 'pozycji')}</small></h2>
     <div class="filters"><input id="fQ" placeholder="Szukaj: numer, element, opis…" value="${esc(filtrListy.q)}"><select id="fR"><option value="">wszystkie rodzaje</option><option value="F"${filtrListy.rodzaj === 'F' ? ' selected' : ''}>punkty foto (F)</option>${Object.entries(Eksport.TYPY).map(([k, t]) => `<option value="${k}"${filtrListy.rodzaj === k ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
-    <div class="tw"><table class="main"><thead><tr><th>Nr</th><th>Rodzaj</th><th>Plan</th><th>Element</th><th>Kategoria</th><th>Opis</th><th>Wymiar</th><th>Zdj.</th></tr></thead><tbody>
-    ${lista.map(z => `<tr data-act="lista-pokaz" data-id="${z.id}"><td style="color:${kolorZ(z)};font-weight:600">${z.nr}</td><td>${esc(opisRodzaju(z))}</td><td>${esc(ark(z.arkuszId))}</td><td>${esc(z.element)}</td><td class="kat">${esc(z.kategoria)}</td><td class="pre">${esc(z.opis)}</td><td class="nowrap">${z.typZ === 'wymiar' ? esc(Eksport.opisWymiaru(z, S, R)) : ''}</td><td>${(z.zdjecia || []).length}</td></tr>`).join('') || '<tr><td colspan="8" class="muted c">Brak pozycji.</td></tr>'}
+    <div class="tw"><table class="main"><thead><tr><th>Nr</th><th>Rodzaj</th><th>Plan${sDoc ? ' (teren)' : ''}</th>${sDoc ? '<th>Plan docelowy</th>' : ''}<th>Element</th><th>Kategoria</th><th>Opis</th><th>Wymiar</th><th>Zdj.</th></tr></thead><tbody>
+    ${lista.map(z => `<tr data-act="lista-pokaz" data-id="${z.id}"><td style="color:${kolorZ(z)};font-weight:600">${z.nr}</td><td>${esc(opisRodzaju(z))}</td><td>${esc(ark(z.arkuszId))}</td>${kolDoc(z)}<td>${esc(z.element)}</td><td class="kat">${esc(z.kategoria)}</td><td class="pre">${esc(z.opis)}</td><td class="nowrap">${z.typZ === 'wymiar' ? esc(Eksport.opisWymiaru(z, S, R)) : ''}</td><td>${(z.zdjecia || []).length}</td></tr>`).join('') || `<tr><td colspan="${sDoc ? 9 : 8}" class="muted c">Brak pozycji.</td></tr>`}
     </tbody></table></div><p class="hint">Kliknij wiersz, aby pokazać znacznik na planie. Wymiary z rysunku liczą się po otwarciu planu z danym podkładem.</p></section>`;
 }
 
 /* ---------- 5. EKSPORT ---------- */
-let opcjeEksp = { pdf: true, zdjecia: true, zestawienia: true, dxf: true, kopia: true };
+let opcjeEksp = { pdf: true, docelowy: true, pdfRoboczy: true, zdjecia: true, zestawienia: true, dxf: true, kopia: true };
 function vEksport() {
   const nzd = S.znaczniki.reduce((s, z) => s + (z.zdjecia || []).length, 0);
   const bezKal = S.arkusze.filter(a => a.typ === 'pdf' && !a.kal && S.znaczniki.some(z => z.arkuszId === a.id));
-  return `<div class="grid2"><section class="card"><h2>Paczka ZIP <small>${S.znaczniki.length} znaczników · ${nzd} zdjęć</small></h2>
-    ${[['pdf', 'Fotodokumentacja PDF', 'plany z klikalnymi punktami, strona na każde zdjęcie z mini-planem i kierunkiem, spis zdjęć, zestawienie zmian'], ['zdjecia', 'Zdjęcia (JPG)', 'folder „zdjecia”, nazwy plików = numery znaczników'], ['zestawienia', 'Zestawienia CSV', 'zdjęcia i zmiany — do Excela'], ['dxf', 'DXF zmian + dane dla AI', 'warstwy INW-* w układzie rysunku, zmiany.json i prompt do naniesienia zmian przez Claude (TEK-RYSOWNIK)'], ['kopia', 'Kopia projektu', 'pozwala wczytać projekt na innym urządzeniu (np. laptop) — zalecane po każdym dniu pracy']]
-      .map(([k, t, o]) => `<label class="mod${opcjeEksp[k] ? ' on' : ''}"><input type="checkbox" data-eksp="${k}"${opcjeEksp[k] ? ' checked' : ''}><b>${t}</b><span>${o}</span></label>`).join('')}
+  const cele = S.arkusze.filter(a => docelowy(a) && Tark(a)), maDoc = S.arkusze.some(docelowy), naDoc = cele.length > 0 && opcjeEksp.docelowy;
+  const M = maDoc ? przydzial() : null;
+  const mod = ([k, t, o]) => `<label class="mod${opcjeEksp[k] ? ' on' : ''}"><input type="checkbox" data-eksp="${k}"${opcjeEksp[k] ? ' checked' : ''}><b>${t}</b><span>${o}</span></label>`;
+  const pozycje = [['pdf', 'Fotodokumentacja PDF', naDoc ? 'na planie docelowym: punkty zdjęć (klikalne), strona na każde zdjęcie z mini-planem i kierunkiem, spis zdjęć' : 'plany z klikalnymi punktami, strona na każde zdjęcie z mini-planem i kierunkiem, spis zdjęć, zestawienie zmian']];
+  if (cele.length) pozycje.push(['docelowy', 'Na planie docelowym (po poprawkach)', `${cele.length} skalibrowany(ch) arkusz(y): ${cele.map(a => esc(a.nazwa)).join(', ')}. Wyłącz, aby zrobić fotodokumentację na podkładach roboczych.`]);
+  if (naDoc) pozycje.push(['pdfRoboczy', 'Zestawienie zmian PDF (robocze)', 'zmiany Z z obrysami i wymiarami na podkładach roboczych — dla projektanta, bez stron zdjęć']);
+  pozycje.push(['zdjecia', 'Zdjęcia (JPG)', 'folder „zdjecia”, nazwy plików = numery znaczników'], ['zestawienia', 'Zestawienia CSV', 'zdjęcia i zmiany — do Excela'], ['dxf', 'DXF zmian + dane dla AI', 'warstwy INW-* w układzie rysunku, zmiany.json i prompt do naniesienia zmian przez Claude (TEK-RYSOWNIK)'], ['kopia', 'Kopia projektu', 'pozwala wczytać projekt na innym urządzeniu (np. laptop) — zalecane po każdym dniu pracy']);
+  return glowa('Eksport', 'i kopia projektu', 'fotodokumentacja PDF, zdjęcia, zestawienia, DXF zmian i kopia do przeniesienia na laptop') + `<div class="grid2"><section class="card"><h2>Paczka ZIP <small>${odm(S.znaczniki.length, 'znacznik', 'znaczniki', 'znaczników')} · ${odm(nzd, 'zdjęcie', 'zdjęcia', 'zdjęć')}</small></h2>
+    ${pozycje.map(mod).join('')}
+    ${maDoc && !cele.length ? '<div class="card warn sm" style="margin-top:.7rem"><b>Plan docelowy nie jest skalibrowany</b> — fotodokumentacja powstanie na podkładach roboczych. Skalibruj arkusze docelowe w zakładce „2. Podkłady”.</div>' : ''}
+    ${naDoc ? pokrycieHtml(M) : ''}
     ${bezKal.length ? `<div class="card warn sm" style="margin-top:.7rem"><b>Uwaga:</b> podkłady PDF bez kalibracji: ${bezKal.map(a => esc(a.nazwa)).join(', ')}. Ich DXF będzie w mm na papierze, a wymiary „z rysunku” będą puste.</div>` : ''}
     <div class="btns"><button class="btn primary lg" data-act="eksport-start"${S.znaczniki.length ? '' : ' disabled'}>Przygotuj paczkę</button></div>
     <div id="ekspPostep"></div><div id="ekspWynik"></div></section>
   <section class="card"><h2>Gdzie trafi plik</h2>
     <p class="sm"><b>iPad:</b> po przygotowaniu paczki stuknij „Zapisz / Udostępnij” → <b>Zachowaj w Plikach</b> (iCloud Drive, OneDrive) albo AirDrop. Na komputerze z Windows najprościej odebrać plik z OneDrive lub iCloud Drive w przeglądarce.</p>
     <p class="sm"><b>Komputer:</b> plik trafia do folderu „Pobrane”.</p>
+    <p class="sm"><b>Teren → biuro:</b> na iPadzie zrób paczkę z <b>kopią projektu</b>; na laptopie: Projekty → Importuj kopię → Podkłady → Plan docelowy → kalibracja → eksport.</p>
     <p class="hint">Zanim użyjesz chmury do danych z obiektu klienta, sprawdź zasady firmy i umowę z klientem (dane osobowe na zdjęciach, poufność obiektu).</p>
     <h3>Pamięć urządzenia</h3><p class="sm" id="miejsce">sprawdzam…</p></section></div>`;
 }
@@ -504,8 +651,21 @@ async function eksportuj() {
   const btn = $('[data-act=eksport-start]'); btn.disabled = true;
   try {
     post(0.01, 'Wczytuję podkłady…');
-    for (const a of S.arkusze) if (S.znaczniki.some(z => z.arkuszId === a.id)) await przygotujArkusz(a, true);
-    const plik = await Eksport.paczka(S, R, { ...opcjeEksp, jakoscPdf: +S.ustaw.pdfPx || 1600 }, post);
+    await zapewnijTransformacje();
+    const cele = S.arkusze.filter(a => docelowy(a) && Tark(a)), naDoc = opcjeEksp.docelowy && cele.length > 0;
+    for (const a of S.arkusze) if (S.znaczniki.some(z => z.arkuszId === a.id) || (naDoc && cele.includes(a))) await przygotujArkusz(a, true);
+    const opc = { ...opcjeEksp, jakoscPdf: +S.ustaw.pdfPx || 1600, tryb: 'pelna', pdfRoboczy: false };
+    if (naDoc) {
+      const M = przydzial();
+      Object.assign(opc, {
+        tryb: 'docelowa', pdfRoboczy: !!opcjeEksp.pdfRoboczy,
+        plany: cele.map(a => ({ a, znaczniki: znacznikiArkusza(a, M), naglowek: a.typ === 'dxf' })), // arkusz PDF zostaje w oryginalnej postaci
+        planyRobocze: S.arkusze.filter(a => !docelowy(a)).map(a => ({ a, znaczniki: S.znaczniki.filter(z => z.arkuszId === a.id && z.rodzaj === 'Z'), naglowek: true })),
+        planDocelowy: new Map([...M].map(([id, m]) => [id, m.a.nazwa]))
+      });
+      const poza = pokrycie(M).poza.length; if (poza) toast(`${poza} punktów nie ma miejsca na planie docelowym — ich zdjęcia będą w PDF bez mini-planu.`, true);
+    }
+    const plik = await Eksport.paczka(S, R, opc, post);
     ostatniaPaczka = plik;
     const MB = liczba(plik.size / 1048576, 1);
     wy.innerHTML = `<div class="imp-pod"><h3>Gotowe: ${esc(plik.name)}</h3><p class="sm">${MB} MB</p><div class="btns">${mozeUdostepnic(plik) ? '<button class="btn primary" data-act="eksport-udostepnij">Zapisz / Udostępnij…</button>' : ''}<button class="btn${mozeUdostepnic(plik) ? '' : ' primary'}" data-act="eksport-pobierz">Pobierz</button></div></div>`;
@@ -516,11 +676,11 @@ async function eksportuj() {
 
 /* ---------- O PROGRAMIE ---------- */
 function vInfo() {
-  return `<section class="card"><h2>${APP.nazwa} <small>wersja ${APP.wersja} · ${APP.data}</small></h2>
-    <div class="about">${LOGO.produktJasne}<span class="muted">produkt marki</span>${LOGO.tektoriaJasne}</div>
+  return glowa('O', 'programie', `${APP.nazwa} · wersja ${esc(APP.wersja)} · ${APP.data}`) + `<section class="card">
+    <div class="about">${LOGO.produktCiemne}<span class="muted">produkt marki</span>${LOGO.tektoriaCiemne}</div>
     <p>Aplikacja do inwentaryzacji budowlanej obiektów istniejących: znaczniki zdjęć i zmian na rzucie DXF/PDF, fotodokumentacja PDF z odnośnikami, DXF zmian do ZWCAD.</p>
-    <h3>Ograniczenia wersji 0.1</h3><ul class="tight"><li>Przyciąganie działa na podkładach DXF; na PDF punkty wskazuje się „na oko” lub wpisuje współrzędne po kalibracji.</li><li>Kreskowania i atrybuty bloków z DXF nie są wyświetlane.</li><li>Jeden projekt pracuje na jednym urządzeniu; przeniesienie przez kopię ZIP (eksport → import).</li><li>Brak opisu technicznego i kontroli pomiarów (odchyłka zamknięcia) — planowane.</li></ul>
-    <h3>Komponenty i licencje</h3><ul class="tight"><li>pdf.js 6.4.299 — Mozilla, Apache 2.0 (odczyt PDF)</li><li>dxf-parser 1.1.2 — MIT (odczyt DXF)</li><li>pdf-lib 1.17.1 + @pdf-lib/fontkit 1.1.1 — MIT (tworzenie PDF)</li><li>fflate 0.8.3 — MIT (ZIP)</li><li>IBM Plex Sans / Mono — SIL OFL 1.1 (czcionki); Space Grotesk — SIL OFL 1.1 (logo)</li></ul><p class="hint">Pełne teksty licencji: folder „licencje” aplikacji.</p></section>`;
+    <h3>Ograniczenia wersji 0.3</h3><ul class="tight"><li>Przyciąganie: DXF oraz PDF wektorowy (wydruk z CAD); na skanie PDF punkty wskazuje się „na oko” lub wpisuje współrzędne po kalibracji.</li><li>Plan docelowy: punkty przenoszą się przez współrzędne — oba podkłady muszą być skalibrowane w tym samym układzie (dokładność = dokładność kalibracji). Obrysy zmian Z zostają na podkładach roboczych.</li><li>Kreskowania i atrybuty bloków z DXF nie są wyświetlane.</li><li>Jeden projekt pracuje na jednym urządzeniu; przeniesienie przez kopię ZIP (eksport → import).</li><li>Brak opisu technicznego i kontroli pomiarów (odchyłka zamknięcia) — planowane.</li></ul>
+    <h3>Komponenty i licencje</h3><ul class="tight"><li>pdf.js 6.4.299 — Mozilla, Apache 2.0 (odczyt PDF)</li><li>dxf-parser 1.1.2 — MIT (odczyt DXF)</li><li>pdf-lib 1.17.1 + @pdf-lib/fontkit 1.1.1 — MIT (tworzenie PDF)</li><li>fflate 0.8.3 — MIT (ZIP)</li><li>Nunito, Fraunces, Space Grotesk — SIL OFL 1.1 (czcionki interfejsu i logo, jak w rodzinie TEKTORIA); IBM Plex Sans / Mono — SIL OFL 1.1 (PDF, współrzędne)</li></ul><p class="hint">Pełne teksty licencji: folder „licencje” aplikacji.</p></section>`;
 }
 
 /* ---------- ZDARZENIA ---------- */
@@ -536,7 +696,17 @@ document.addEventListener('click', async (e) => {
     else if (act === 'proj-otworz') { e.stopPropagation(); const p = await Baza.projekt(id); if (p) otworzProjekt(p); }
     else if (act === 'proj-usun') { e.stopPropagation(); const p = (await Baza.projekt(id)); if (!p) return; const nzd = p.znaczniki.reduce((s, z) => s + (z.zdjecia || []).length, 0);
       if (await potwierdz(`Usunąć projekt „${esc(p.meta.nazwa || 'bez nazwy')}” z tego urządzenia? Zostaną usunięte podkłady i ${nzd} zdjęć. Tego nie da się cofnąć — jeśli nie masz kopii ZIP, najpierw zrób eksport.`, 'Usuń projekt', 'Anuluj', true)) { await Baza.usunProjekt(id); if (S && S.id === id) { S = null; } toast('Usunięto projekt.'); render(); } }
-    else if (act === 'dodaj-podklad') { const f = await wybierzPliki({ accept: '.dxf,.pdf,application/pdf,application/dxf,image/vnd.dxf', multiple: true }); if (f.length) await dodajPodklad(f); }
+    else if (act === 'dodaj-podklad') { const f = await wybierzPliki({ accept: '.dxf,.pdf,application/pdf,application/dxf,image/vnd.dxf', multiple: true }); if (f.length) await dodajPodklad(f, b.dataset.rola); }
+    else if (act === 'demo-docelowy') { const bl = await (await fetch('przyklad/hala_docelowy_A3x2.pdf')).blob(); await dodajPodklad([new File([bl], 'hala_docelowy_A3x2.pdf', { type: 'application/pdf' })], 'docelowy'); toast('Dodano przykładowy plan docelowy. Kalibracja: ark. 1 — A/1 = 0;0 i D/7 = 72;72 m; ark. 2 — A/7 = 72;0 i D/13 = 144;72 m. Potem „Obszar rzutu” na każdym arkuszu.'); }
+    else if (act === 'ark-rola') {
+      const a = S.arkusze.find(x => x.id === id); if (!a) return;
+      if (!docelowy(a) && S.znaczniki.some(z => z.arkuszId === a.id)) return toast('Na tym podkładzie są znaczniki z terenu — nie może być planem docelowym. Plan docelowy dodaj jako osobny plik (PDF po poprawkach).', true);
+      if (docelowy(a)) { delete a.rola; delete a.obszar; for (const z of S.znaczniki) if (z.przes) { delete z.przes[a.id]; if (!Object.keys(z.przes).length) delete z.przes; } } else a.rola = 'docelowy';
+      zapisz(true); render(); toast(docelowy(a) ? `„${a.nazwa}” jest teraz planem docelowym.` : `„${a.nazwa}” jest teraz podkładem roboczym.`);
+    }
+    else if (act === 'ark-obszar') { kalibracjaArk = null; $$('#narz .nb').forEach(x => x.classList.remove('on')); Plan.narzedzie('obszar'); odswiezWpis(); status('Obszar rzutu: wskaż dwa przeciwległe narożniki.'); }
+    else if (act === 'ark-obszar-usun') { const a = arkBiez(); if (a) { a.obszar = null; const r = rArk(); if (r) r.obszar = null; zapisz(true); odswiezPlan(); b.style.display = 'none'; toast('Usunięto obszar rzutu — punkty trafiają na cały arkusz.'); } }
+    else if (act === 'przywroc-polozenie') { const z = S.znaczniki.find(x => x.id === id); if (z && z.przes) { migawka(); delete z.przes[arkId]; if (!Object.keys(z.przes).length) delete z.przes; zapisz(true); odswiezPlan(); toast(`${z.nr}: przywrócono położenie z kalibracji.`); } }
     else if (act === 'ark-otworz') { arkId = id; S.ostatniArkusz = id; tab = 'plan'; render(); }
     else if (act === 'ark-usun') await usunArkusz(id);
     else if (act === 'ark-kalibruj') rozpocznijKalibracje(id);
@@ -553,6 +723,7 @@ document.addEventListener('click', async (e) => {
     else if (act === 'panel-zamknij') { wybrany = null; Plan.zaznacz(null); odswiezPanel(); }
     else if (act === 'znacznik-pokaz' || act === 'lista-pokaz') {
       const z = S.znaczniki.find(x => x.id === id); if (!z) return; wybrany = z.id;
+      if (act === 'znacznik-pokaz' && !b.dataset.rob && tab === 'plan' && docelowy(arkBiez())) { const m = przydzial().get(z.id); if (m && m.a.id === arkId) { Plan.pokaz(m.p[0], m.p[1]); Plan.zaznacz(z.id); odswiezPanel(); return; } }
       if (tab !== 'plan' || arkId !== z.arkuszId) { arkId = z.arkuszId; tab = 'plan'; render(); await czekaj(500); }
       Plan.pokaz(z.geom.pkt[0][0], z.geom.pkt[0][1]); Plan.zaznacz(z.id); odswiezPanel();
     }
@@ -588,7 +759,7 @@ document.addEventListener('change', (e) => {
   if (el.dataset.zm && el.tagName === 'SELECT') { const z = S.znaczniki.find(x => x.id === wybrany); if (z) zmienPole(z, el.dataset.zm, el.value); }
   if (el.dataset.wsp !== undefined) { const z = S.znaczniki.find(x => x.id === wybrany); if (z) zmienWspolrzedna(z, +el.dataset.wsp, +el.dataset.os, el.value); }
   if (el.dataset.ark) { const a = S.arkusze.find(x => x.id === el.dataset.ark); if (a) { a.nazwa = el.value.trim() || a.nazwa; zapisz(true); } }
-  if (el.dataset.eksp) { opcjeEksp[el.dataset.eksp] = el.checked; el.closest('.mod').classList.toggle('on', el.checked); }
+  if (el.dataset.eksp) { opcjeEksp[el.dataset.eksp] = el.checked; el.closest('.mod').classList.toggle('on', el.checked); if (el.dataset.eksp === 'docelowy') { $('#view').innerHTML = vEksport(); odswiezMiejsce(); } }
   if (el.id === 'fR') { filtrListy.rodzaj = el.value; $('#view').innerHTML = vLista(); }
 });
 document.addEventListener('keydown', (e) => {
@@ -603,15 +774,14 @@ document.addEventListener('keydown', (e) => {
 ['dragover', 'dragleave', 'drop'].forEach(ev => document.addEventListener(ev, (e) => {
   const d = e.target.closest && e.target.closest('.drop'); if (!d) { if (ev !== 'dragleave') e.preventDefault(); return; }
   e.preventDefault(); d.classList.toggle('over', ev === 'dragover');
-  if (ev === 'drop' && S) { const files = Array.from(e.dataTransfer.files || []); if (files.length) dodajPodklad(files); }
+  if (ev === 'drop' && S) { const files = Array.from(e.dataTransfer.files || []); if (files.length) dodajPodklad(files, d.dataset.rola); }
 }));
 window.addEventListener('resize', wysokoscPaska);
 window.addEventListener('pagehide', () => { if (S) Baza.zapiszProjekt(S); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && S) Baza.zapiszProjekt(S); });
 
 /* ---------- START ---------- */
-$('#brand').innerHTML = LOGO.produktCiemne + `<span class="ver">v${APP.wersja}</span>`;
-$('#brand').dataset.act = 'do-startu'; $('#brand').title = 'Ekran główny — lista projektów';
+$('#verPill').textContent = 'v' + APP.wersja;
 $('#marka').innerHTML = '<small>produkt marki</small>' + LOGO.tektoriaCiemne;
 Baza.naBlad = (t) => toast(t, true);
 window.addEventListener('unhandledrejection', (e) => { const r = e.reason || {}; if (r.name === 'RenderingCancelledException' || r.name === 'AbortError') return; console.error(r); toast('Wystąpił błąd: ' + (r.message || r), true); });
@@ -624,8 +794,10 @@ window.addEventListener('unhandledrejection', (e) => { const r = e.reason || {};
       const reg = await navigator.serviceWorker.register('sw.js');
       let odswiezNaZadanie = false; // przeładowanie tylko po kliknięciu „Odśwież” — nie przy pierwszej instalacji
       const pokazAktualizacje = (w) => toast('Jest nowa wersja TEK-INW.', false, { tekst: 'Odśwież', fn: () => { odswiezNaZadanie = true; if (S) Baza.zapiszProjekt(S); w.postMessage({ typ: 'aktywuj' }); } });
+      const sledz = (w) => w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) pokazAktualizacje(w); });
       if (reg.waiting && navigator.serviceWorker.controller) pokazAktualizacje(reg.waiting);
-      reg.addEventListener('updatefound', () => { const w = reg.installing; w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) pokazAktualizacje(w); }); });
+      else if (reg.installing) sledz(reg.installing); // nowa wersja zaczęła się pobierać, zanim aplikacja zaczęła nasłuchiwać
+      reg.addEventListener('updatefound', () => sledz(reg.installing));
       navigator.serviceWorker.addEventListener('controllerchange', () => { if (!odswiezNaZadanie) return; odswiezNaZadanie = false; setTimeout(() => location.reload(), 250); });
       setInterval(() => reg.update().catch(() => { }), 30 * 60 * 1000);
     } catch (e) { console.warn('Service worker:', e); }

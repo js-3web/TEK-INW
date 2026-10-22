@@ -12,7 +12,7 @@
 
 const Plan = (() => {
   const KOLORY = { F: '#0A8FB0', wymiar: '#c2410c', nowy: '#15803d', brak: '#b91c1c', uwaga: '#7c3aed', szkic: '#57534e' };
-  const PAPIER = '#e9e7df', OFFSET_CELOWNIKA = 78, R_LUPY = 64, ZOOM_LUPY = 3;
+  const PAPIER = '#0b1428', OFFSET_CELOWNIKA = 78, R_LUPY = 64, ZOOM_LUPY = 3; // PAPIER = tło „biurka” wokół arkusza (granat jak w TEK-BIURO BUDOWY); sam arkusz jest biały
   let host, cv, g, tlo, gt, dpr = 1, W = 0, H = 0;
   let A = null, Z = [];                       // bieżący arkusz (dane robocze) i jego znaczniki
   let v = { s: 1, tx: 0, ty: 0 };             // bieżący widok
@@ -99,6 +99,8 @@ const Plan = (() => {
   function rysujDxf() {
     const s = v.s * dpr, d = A.dxf, wid = A.warstwyWid || {};
     gt.setTransform(s, 0, 0, s, v.tx * dpr, v.ty * dpr);
+    { const z = d.zasieg, m = 0.03 * Math.max(z.maxx - z.minx, z.maxy - z.miny); // biały arkusz pod rysunkiem DXF
+      gt.fillStyle = '#fff'; gt.shadowColor = 'rgba(0,0,0,.35)'; gt.shadowBlur = 14; gt.fillRect(z.minx - m, z.miny - m, z.maxx - z.minx + 2 * m, z.maxy - z.miny + 2 * m); gt.shadowBlur = 0; }
     gt.lineWidth = 0.85 / v.s; gt.lineJoin = 'round'; gt.lineCap = 'round';
     for (const p of A.sciezki) { if (wid[p.warstwa] === false) continue; gt.strokeStyle = kolorWarstwy(p.kolor); gt.stroke(p.p); }
     // teksty: tylko czytelne (≥ 3 px) i w polu widzenia
@@ -113,7 +115,7 @@ const Plan = (() => {
       if (++n > 5000) break;
       const [X, Y] = naEkran(t.x, t.y);
       gt.save(); gt.translate(X * dpr, Y * dpr); gt.rotate(t.rot);
-      gt.font = `${hp * dpr}px 'IBM Plex Sans', sans-serif`; gt.fillStyle = kolorWarstwy(t.kol);
+      gt.font = `${hp * dpr}px Nunito, sans-serif`; gt.fillStyle = kolorWarstwy(t.kol);
       gt.textAlign = t.poz === 'C' ? 'center' : t.poz === 'R' ? 'right' : 'left';
       const linie = t.t.split('\n'), lh = hp * dpr * 1.25;
       let dy = t.pion === 'T' ? hp * dpr : t.pion === 'M' ? hp * dpr * 0.5 - (linie.length - 1) * lh / 2 : -(linie.length - 1) * lh;
@@ -151,7 +153,7 @@ const Plan = (() => {
       g.setTransform(k, 0, 0, k, (v.tx - vt.tx * k) * dpr, (v.ty - vt.ty * k) * dpr); g.drawImage(tlo, 0, 0);
     }
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (!A) { g.fillStyle = '#6f6e64'; g.font = "15px 'IBM Plex Sans', sans-serif"; g.textAlign = 'center'; g.fillText('Dodaj podkład (PDF lub DXF) w zakładce „2. Podkłady”.', W / 2, H / 2); return; }
+    if (!A) { g.fillStyle = '#94a2bb'; g.font = "15px Nunito, sans-serif"; g.textAlign = 'center'; g.fillText('Dodaj podkład (PDF lub DXF) w zakładce „2. Podkłady”.', W / 2, H / 2); return; }
     for (const z of Z) if (z.id !== zazn) rysujZnacznik(z, false);
     const zz = Z.find(z => z.id === zazn); if (zz) rysujZnacznik(zz, true);
     rysujPodglad();
@@ -191,8 +193,8 @@ const Plan = (() => {
         const [a, b] = P, d = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, nx = -(b[1] - a[1]) / d * 7, ny = (b[0] - a[0]) / d * 7;
         g.lineWidth = 2; g.beginPath(); for (const p of P) { g.moveTo(p[0] - nx + ny * 0.6, p[1] - ny - nx * 0.6); g.lineTo(p[0] + nx - ny * 0.6, p[1] + ny + nx * 0.6); } g.stroke();
       }
-      if (z.typZ === 'uwaga') { const [x, y] = P[0]; g.fillStyle = wyb ? '#ffb000' : kol; g.beginPath(); g.moveTo(x, y - 9); g.lineTo(x + 9, y); g.lineTo(x, y + 9); g.lineTo(x - 9, y); g.closePath(); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.stroke(); }
-      const [lx, ly] = z.typZ === 'wymiar' && P.length === 2 ? [(P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2 - 14] : z.typZ === 'uwaga' ? [P[0][0] + 24, P[0][1] - 14] : [P[0][0], P[0][1] - 14];
+      if (z.typZ === 'uwaga' || z._punktowy) { const [x, y] = P[0]; g.fillStyle = wyb ? '#ffb000' : kol; g.beginPath(); g.moveTo(x, y - 9); g.lineTo(x + 9, y); g.lineTo(x, y + 9); g.lineTo(x - 9, y); g.closePath(); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.stroke(); }
+      const [lx, ly] = z.typZ === 'wymiar' && P.length === 2 ? [(P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2 - 14] : (z.typZ === 'uwaga' || z._punktowy) ? [P[0][0] + 24, P[0][1] - 14] : [P[0][0], P[0][1] - 14];
       let tekst = 'Z' + parseInt(z.nr.slice(2), 10);
       if (z.typZ === 'wymiar' && Number.isFinite(z.wymPom)) tekst += ' · ' + (cb.formatWym ? cb.formatWym(z) : '');
       etykieta(lx, ly, tekst, kol, wyb);
@@ -203,8 +205,10 @@ const Plan = (() => {
   function rysujPodglad() {
     const P = punkty.map(p => naEkran(p[0], p[1])), c = celownik || hover;
     g.save(); g.strokeStyle = '#d9480f'; g.fillStyle = '#d9480f'; g.lineWidth = 2; g.setLineDash([6, 4]);
+    if (A && A.obszar) { const a0 = naEkran(A.obszar[0], A.obszar[1]), a1 = naEkran(A.obszar[2], A.obszar[3]); g.save(); g.setLineDash([10, 6]); g.strokeStyle = '#0A8FB0'; g.lineWidth = 1.5; g.strokeRect(a0[0], a0[1], a1[0] - a0[0], a1[1] - a0[1]); g.restore(); }
+    if (narz === 'obszar' && punkty.length === 1 && c) { const a0 = naEkran(...punkty[0]), a1 = naEkran(c.x, c.y); g.strokeRect(a0[0], a0[1], a1[0] - a0[0], a1[1] - a0[1]); }
     if (narz === 'kalibracja') { punkty.forEach((p, i) => { const [x, y] = naEkran(p[0], p[1]); krzyz(x, y, 12, '#d9480f'); g.font = "600 12px 'IBM Plex Mono', monospace"; g.fillText(String(i + 1), x + 9, y - 9); }); }
-    else if (P.length) {
+    else if (P.length && narz !== 'obszar') {
       g.beginPath(); g.moveTo(...P[0]); for (const p of P.slice(1)) g.lineTo(...p);
       if (c && narz !== 'szkic') {
         const q = naEkran(c.x, c.y);
@@ -227,7 +231,7 @@ const Plan = (() => {
     if (zLupa && c.lupa) {
       const lx = clamp(c.palec[0] - 95, R_LUPY + 6, W - R_LUPY - 6), ly = clamp(c.palec[1] - 150, R_LUPY + 6, H - R_LUPY - 6);
       g.save(); g.beginPath(); g.arc(lx, ly, R_LUPY, 0, Math.PI * 2); g.clip();
-      g.fillStyle = PAPIER; g.fillRect(lx - R_LUPY, ly - R_LUPY, 2 * R_LUPY, 2 * R_LUPY);
+      g.fillStyle = A.typ === 'dxf' ? '#fff' : PAPIER; g.fillRect(lx - R_LUPY, ly - R_LUPY, 2 * R_LUPY, 2 * R_LUPY); // lupa DXF rysuje wektory na białym
       if (A.typ === 'dxf' && A.lWierz < 400000) { // DXF: lupa rysuje wektory — ostra przy każdym powiększeniu
         const s = v.s * ZOOM_LUPY, wid = A.warstwyWid || {};
         g.save(); g.translate(lx - c.x * s, ly - c.y * s); g.scale(s, s); g.lineWidth = 1.1 / s;
@@ -236,7 +240,7 @@ const Plan = (() => {
       } else if (vt) { const k = v.s / vt.s, sx = ((x - v.tx) / k + vt.tx) * dpr, sy = ((y - v.ty) / k + vt.ty) * dpr, rr = R_LUPY / ZOOM_LUPY / k * dpr;
         g.drawImage(tlo, sx - rr, sy - rr, rr * 2, rr * 2, lx - R_LUPY, ly - R_LUPY, 2 * R_LUPY, 2 * R_LUPY); }
       g.strokeStyle = c.snap ? '#15803d' : '#d9480f'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(lx - R_LUPY, ly); g.lineTo(lx + R_LUPY, ly); g.moveTo(lx, ly - R_LUPY); g.lineTo(lx, ly + R_LUPY); g.stroke();
-      g.restore(); g.save(); g.beginPath(); g.arc(lx, ly, R_LUPY, 0, Math.PI * 2); g.lineWidth = 3; g.strokeStyle = '#0B1622'; g.stroke(); g.lineWidth = 1; g.strokeStyle = '#fff'; g.stroke(); g.restore();
+      g.restore(); g.save(); g.beginPath(); g.arc(lx, ly, R_LUPY, 0, Math.PI * 2); g.lineWidth = 3; g.strokeStyle = '#0d1830'; g.stroke(); g.lineWidth = 1; g.strokeStyle = '#fff'; g.stroke(); g.restore();
     }
     krzyz(x, y, 16, c.snap ? '#15803d' : '#d9480f');
     if (c.snap) { g.save(); g.strokeStyle = '#15803d'; g.lineWidth = 2; g.strokeRect(x - 6, y - 6, 12, 12); g.restore(); }
@@ -246,8 +250,9 @@ const Plan = (() => {
   /* ---------- przyciąganie i orto ---------- */
   function przyciagnij(sx, sy) {
     let x = sx, y = sy, snap = false;
-    if (opcje.snap && A && A.typ === 'dxf' && A.dxf.snap) { const p = A.dxf.snap.najblizszy(sx, sy, 14 / v.s); if (p) { x = p[0]; y = p[1]; snap = true; } }
-    if (!snap && opcje.orto && punkty.length && narz !== 'kalibracja') {
+    const ix = A && (A.snap || (A.dxf && A.dxf.snap)); // DXF albo punkty wyciągnięte z wektorowego PDF
+    if (opcje.snap && ix) { const p = ix.najblizszy(sx, sy, 14 / v.s); if (p) { x = p[0]; y = p[1]; snap = true; } }
+    if (!snap && opcje.orto && punkty.length && narz !== 'kalibracja' && narz !== 'obszar') {
       const o = punkty[punkty.length - 1], al = A && A.T ? -Geom.katOsiX(A.T) : 0; // kierunek osi X świata na arkuszu
       const dx = x - o[0], dy = y - o[1], c = Math.cos(al), s = Math.sin(al);
       const u = dx * c + dy * s, w = -dx * s + dy * c;
@@ -261,7 +266,7 @@ const Plan = (() => {
     const a = Geom.zastosuj(A.T, ...p), b = Geom.zastosuj(A.T, ...q), Ti = A.Ti;
     return [a, [b[0], a[1]], b, [a[0], b[1]]].map(w => Geom.zastosuj(Ti, w[0], w[1]));
   }
-  const potrzebaPunktow = () => ({ wymiar: 2, uwaga: 1, pomiar: 2, kalibracja: 2 }[narz] || ((narz === 'nowy' || narz === 'brak') ? (podtryb === 'polilinia' ? Infinity : 2) : 0));
+  const potrzebaPunktow = () => ({ wymiar: 2, uwaga: 1, pomiar: 2, kalibracja: 2, obszar: 2 }[narz] || ((narz === 'nowy' || narz === 'brak') ? (podtryb === 'polilinia' ? Infinity : 2) : 0));
 
   /* ---------- obsługa wskaźnika (palec, rysik, mysz) ---------- */
   const xy = (e) => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
@@ -279,6 +284,10 @@ const Plan = (() => {
     if (wsk.size > 2) return;
     const palecPrzesuwa = e.pointerType === 'touch' && (opcje.palec || opcje.tylkoRysik);
     if (e.pointerType === 'mouse' && e.button !== 0) { gest = { typ: 'przesun', p0: p, v0: { ...v }, tap: false }; return; }
+    if (narz === 'przesunZn' && !palecPrzesuwa) {
+      const z = znajdz(p); if (z) { zazn = z.id; gest = { typ: 'przesunZn', z, p0: p, orig: z.geom.pkt.map(q => q.slice()), ruszyl: false }; if (cb.naWybor) cb.naWybor(z.id); planuj(); return; }
+      gest = { typ: 'przesun', p0: p, v0: { ...v }, tap: false }; return;
+    }
     if (narz === 'przegladaj' || palecPrzesuwa) { gest = { typ: 'przesun', p0: p, v0: { ...v }, tap: true }; return; }
     if (narz === 'foto') { const [sx, sy] = naArkusz(...p); foto = { x: sx, y: sy, kier: null, p0: p }; gest = { typ: 'foto' }; planuj(); return; }
     if (narz === 'szkic') { szkic = [naArkusz(...p)]; gest = { typ: 'szkic' }; planuj(); return; }
@@ -303,6 +312,11 @@ const Plan = (() => {
       const ax = (gest.m0[0] - gest.v0.tx) / gest.v0.s, ay = (gest.m0[1] - gest.v0.ty) / gest.v0.s;
       v = { s, tx: m[0] - ax * s, ty: m[1] - ay * s }; planuj(); return;
     }
+    if (gest.typ === 'przesunZn') {
+      let dx = (p[0] - gest.p0[0]) / v.s, dy = (p[1] - gest.p0[1]) / v.s; if (Math.hypot(p[0] - gest.p0[0], p[1] - gest.p0[1]) > 3) gest.ruszyl = true;
+      const c = przyciagnij(gest.orig[0][0] + dx, gest.orig[0][1] + dy); if (c.snap) { dx = c.x - gest.orig[0][0]; dy = c.y - gest.orig[0][1]; } // pierwszy punkt przyciąga się do rysunku
+      gest.z.geom.pkt = gest.orig.map(q => [q[0] + dx, q[1] + dy]); planuj(); return;
+    }
     if (gest.typ === 'przesun') {
       if (gest.tap && Math.hypot(p[0] - gest.p0[0], p[1] - gest.p0[1]) > 8) gest.tap = false;
       v = { ...v, tx: gest.v0.tx + p[0] - gest.p0[0], ty: gest.v0.ty + p[1] - gest.p0[1] }; planuj(); return;
@@ -315,6 +329,7 @@ const Plan = (() => {
     const w = wsk.get(e.pointerId); wsk.delete(e.pointerId);
     if (!gest) return;
     if (gest.typ === 'szczyp') { if (wsk.size === 0) { gest = null; odswiezTlo(); zmianaWidoku(); } return; }
+    if (gest.typ === 'przesunZn') { const gz = gest; gest = null; const d = [gz.z.geom.pkt[0][0] - gz.orig[0][0], gz.z.geom.pkt[0][1] - gz.orig[0][1]]; gz.z.geom.pkt = gz.orig; if (gz.ruszyl && cb.naPrzesun) cb.naPrzesun(gz.z.id, d); planuj(); return; }
     if (gest.typ === 'przesun') {
       const tap = gest.tap && w && performance.now() - w.t < 450; gest = null; odswiezTlo(); zmianaWidoku();
       if (tap) trafienie(w.p); return;
@@ -344,6 +359,7 @@ const Plan = (() => {
   /* ---------- punkty narzędzi ---------- */
   function dodajPunkt(p) {
     if (narz === 'kalibracja') { punkty.push(p); if (punkty.length === 2) { const pk = punkty; punkty = []; if (cb.naKalibracje) cb.naKalibracje(pk); } planuj(); return; }
+    if (narz === 'obszar') { punkty.push(p); if (punkty.length === 2) { const pk = punkty; punkty = []; if (cb.naObszar) cb.naObszar(pk); } planuj(); return; }
     if (narz === 'pomiar') { punkty.push(p); if (punkty.length === 2) { pomiar = punkty; punkty = []; if (cb.naPomiar) cb.naPomiar(pomiar); } else pomiar = null; planuj(); return; }
     if (podtrybProst()) { const R = prostokat(punkty[0], p); punkty = []; koniec({ typ: 'polilinia', pkt: R, zamkn: true }); return; }
     punkty.push(p);
@@ -375,7 +391,8 @@ const Plan = (() => {
   }
 
   /* ---------- trafienie w znacznik ---------- */
-  function trafienie(p) {
+  function trafienie(p) { const best = znajdz(p); zazn = best ? best.id : null; planuj(); if (cb.naWybor) cb.naWybor(zazn); }
+  function znajdz(p) {
     let best = null, bd = 18;
     for (const z of Z) {
       const P = (z.geom.pkt || []).map(q => naEkran(q[0], q[1]));
@@ -384,8 +401,7 @@ const Plan = (() => {
       else for (let i = 0; i < P.length - (z.geom.zamkn ? 0 : 1); i++) d = Math.min(d, odlOdc(p, P[i], P[(i + 1) % P.length]));
       if (d < bd) { bd = d; best = z; }
     }
-    zazn = best ? best.id : null; planuj();
-    if (cb.naWybor) cb.naWybor(zazn);
+    return best;
   }
   function odlOdc(p, a, b) { const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy; let t = L ? ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L : 0; t = clamp(t, 0, 1); return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy); }
 

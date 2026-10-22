@@ -8,7 +8,7 @@
 
 const Eksport = (() => {
   const A4 = [841.89, 595.28];
-  const KOL = { F: '#0A8FB0', wymiar: '#c2410c', nowy: '#15803d', brak: '#b91c1c', uwaga: '#7c3aed', szkic: '#57534e', navy: '#0B1622', akcent: '#1a4d5c', szary: '#6f6e64', linia: '#d8d6cc', tlo: '#faf9f4' };
+  const KOL = { F: '#0A8FB0', wymiar: '#c2410c', nowy: '#15803d', brak: '#b91c1c', uwaga: '#7c3aed', szkic: '#57534e', navy: '#0d1830', akcent: '#c1692e', szary: '#6f6e64', linia: '#d8d6cc', tlo: '#faf9f4' };
   const TYPY = { wymiar: 'Inny wymiar / położenie', nowy: 'Nowy element', brak: 'Element nie istnieje', uwaga: 'Uwaga', szkic: 'Szkic odręczny' };
   const ascii = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ł/g, 'l').replace(/Ł/g, 'L');
   const nazwaPl = (s, dl = 40) => ascii(bezpiecznaNazwa(s, dl));
@@ -44,8 +44,15 @@ const Eksport = (() => {
     const m = S.meta;
     doc.setTitle(`Dokumentacja fotograficzna — ${m.nazwa || 'inwentaryzacja'}`); doc.setAuthor(m.autor || ''); doc.setSubject('Inwentaryzacja budowlana — dokumentacja fotograficzna');
     doc.setCreator(`${APP.nazwa} ${APP.wersja}`); doc.setProducer('TEK-INW · pdf-lib'); doc.setLanguage('pl-PL'); doc.setCreationDate(new Date());
-    const { F, Zm, zdjecia } = uporzadkuj(S);
-    const arkusze = S.arkusze.filter(a => S.znaczniki.some(z => z.arkuszId === a.id));
+    /* Tryb: „pelna” (plany robocze + zmiany + zdjęcia), „docelowa” (plany docelowe po poprawkach + zdjęcia, bez obrysów Z),
+       „robocza” (zestawienie zmian Z + plany robocze, bez stron zdjęć — materiał dla projektanta). */
+    const tryb = opcje.tryb || 'pelna';
+    const { F, Zm } = uporzadkuj(S); const zdjecia = tryb === 'robocza' ? [] : uporzadkuj(S).zdjecia;
+    const wlasne = (a) => S.znaczniki.filter(z => z.arkuszId === a.id && (tryb !== 'robocza' || z.rodzaj === 'Z'));
+    const plany = (opcje.plany || S.arkusze.map(a => ({ a, znaczniki: wlasne(a), naglowek: true })))
+      .filter(pl => R.get(pl.a.id) && pl.znaczniki.length);
+    const arkusze = plany.map(pl => pl.a);
+    if (tryb === 'robocza') { doc.setTitle(`Zestawienie zmian (materiał roboczy) — ${m.nazwa || 'inwentaryzacja'}`); doc.setSubject('Inwentaryzacja budowlana — zmiany względem rysunku'); }
 
     /* 1. Podkłady jako obiekty wektorowe (XObject) — wstawiane wielokrotnie bez powielania treści. */
     postep(0.02, 'Przygotowuję podkłady…');
@@ -89,13 +96,15 @@ const Eksport = (() => {
       return out;
     }
     const skroc = (t, font, size, maxW) => { t = String(t || '').replace(/\s+/g, ' '); if (szer(t, font, size) <= maxW) return t; while (t.length > 1 && szer(t + '…', font, size) > maxW) t = t.slice(0, -1); return t + '…'; };
-    function rysujLogo(page, x, y, h) { // logo TEK-INW (ścieżki z pliku logo) — wysokość h, lewy dolny róg (x, y)
-      const svg = LOGO.produktJasne, vb = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/), k = h / parseFloat(vb[2]);
-      const top = y + h;
-      svg.replace(/<g transform="translate\(([\d.]+),([\d.]+)\)">(.*?)<\/g>/, (_, tx, ty, inner) => { inner.replace(/<path d="([^"]+)" fill="([^"]+)"\/>/g, (__, d, fill) => { page.drawSvgPath(d, { x: x + parseFloat(tx) * k, y: top - parseFloat(ty) * k, scale: k, color: hexRgb(fill) }); }); return ''; });
-      const bez = svg.replace(/<g [\s\S]*?<\/g>/, '');
-      bez.replace(/<path d="([^"]+)" fill="none" stroke="([^"]+)" stroke-width="([\d.]+)"[^>]*\/>/g, (_, d, st, sw) => { page.drawSvgPath(d, { x, y: top, scale: k, borderColor: hexRgb(st), borderWidth: parseFloat(sw) * k }); });
-      bez.replace(/<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)" fill="([^"]+)"\/>/g, (_, cx, cy, r, fill) => { page.drawCircle({ x: x + parseFloat(cx) * k, y: top - parseFloat(cy) * k, size: parseFloat(r) * k, color: hexRgb(fill) }); });
+    function rysujLogo(page, x, y, h) { // logo TEK-INW (wektorowo, ścieżki z js/logo.js) — wysokość h, lewy dolny róg (x, y)
+      const svg = LOGO.produktJasne, vb = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/), k = h / parseFloat(vb[2]), top = y + h;
+      const atr = (t, n) => { const m = t.match(new RegExp(' ' + n + '="([^"]*)"')); return m ? m[1] : null; };
+      for (const el of svg.match(/<(path|circle|rect)\b[^>]*>/g) || []) {
+        const fill = atr(el, 'fill'), st = atr(el, 'stroke'), sw = parseFloat(atr(el, 'stroke-width') || '0');
+        const o = { color: fill && fill !== 'none' ? hexRgb(fill) : undefined, borderColor: st && st !== 'none' ? hexRgb(st) : undefined, borderWidth: st && st !== 'none' ? sw * k : 0 };
+        if (el.startsWith('<path')) page.drawSvgPath(atr(el, 'd'), { x, y: top, scale: k, ...o });
+        else if (el.startsWith('<circle')) page.drawCircle({ x: x + parseFloat(atr(el, 'cx')) * k, y: top - parseFloat(atr(el, 'cy')) * k, size: parseFloat(atr(el, 'r')) * k, ...o });
+      }
       return parseFloat(vb[1]) * k;
     }
     function stopka(page, nr, razem, dodatek) {
@@ -108,29 +117,35 @@ const Eksport = (() => {
     /* 2. Układ stron (najpierw policzenie, potem rysowanie — odnośniki potrzebują gotowych stron). */
     const WIERSZE_SPISU = 26, WIERSZE_ZM = 15;
     const strTytul = doc.addPage(A4);
-    const strSpis = []; for (let i = 0; i < Math.max(1, Math.ceil(zdjecia.length / WIERSZE_SPISU)); i++) strSpis.push(doc.addPage(A4));
-    const strZm = []; for (let i = 0; i < Math.ceil(Zm.length / WIERSZE_ZM); i++) strZm.push(doc.addPage(A4));
+    const strSpis = []; if (tryb !== 'robocza') for (let i = 0; i < Math.max(1, Math.ceil(zdjecia.length / WIERSZE_SPISU)); i++) strSpis.push(doc.addPage(A4));
+    const strZm = []; if (tryb !== 'docelowa') for (let i = 0; i < Math.ceil(Zm.length / WIERSZE_ZM); i++) strZm.push(doc.addPage(A4));
     const skA = (P) => clamp(P.w / 1190, 0.55, 2.2), naglA = (P) => 64 * skA(P); // nagłówek planu skalowany do wielkości arkusza
     const strPlan = new Map();
-    for (const a of arkusze) { const P = PODK.get(a.id); if (!P) continue; strPlan.set(a.id, doc.addPage([P.w, P.h + naglA(P)])); }
+    for (const pl of plany) { const P = PODK.get(pl.a.id); if (!P) continue; strPlan.set(pl.a.id, doc.addPage([P.w, P.h + (pl.naglowek ? naglA(P) : 0)])); }
     const strZdj = zdjecia.map(() => doc.addPage(A4));
     const razem = doc.getPageCount();
     const nrStrony = (p) => doc.getPages().indexOf(p) + 1;
     const pierwszeZdj = new Map(); zdjecia.forEach((x, k) => { if (!pierwszeZdj.has(x.z.id)) pierwszeZdj.set(x.z.id, k); });
-    const promienPlanu = (P) => clamp(Math.min(P.w, P.h) / 140, 6, 18);
+    const promienPlanu = (P) => clamp(Math.min(P.w, P.h) / 120, 7, 18); // A3: kółko ok. 5 mm — czytelne po wydruku
     const naPlanie = (a, q) => { const P = PODK.get(a.id), L = P.pl; return [L.p * q[0] + L.ox, -L.p * q[1] + L.oy]; }; // arkusz → strona planu (y w górę)
     const kolor = (z) => z.rodzaj === 'F' ? KOL.F : (KOL[z.typZ] || '#444');
+    const gdzie = new Map(); // id znacznika → { a: arkusz planu w tym dokumencie, z: znacznik tak, jak leży na tym arkuszu }
+    for (const pl of plany) for (const zz of pl.znaczniki) if (!gdzie.has(zz.id)) gdzie.set(zz.id, { a: pl.a, z: zz });
+    const ZmF = Zm.filter(z => (z.zdjecia || []).length);
 
     /* 3. Strona tytułowa */
     {
       const p = strTytul, [w, h] = A4;
-      p.drawRectangle({ x: 0, y: h - 8, width: w, height: 8, color: hexRgb(KOL.navy) });
+      p.drawRectangle({ x: 0, y: h - 8, width: w, height: 8, color: hexRgb(KOL.navy) }); p.drawRectangle({ x: 0, y: h - 10.5, width: w, height: 2.5, color: hexRgb('#e07b3c') }); // pasek granat + pomarańcz (rodzina TEKTORIA)
       rysujLogo(p, 40, h - 70, 34);
       tekst(p, 'PRODUKT MARKI TEKTORIA', w - 40 - szer('PRODUKT MARKI TEKTORIA', fM, 7.5), h - 52, 7.5, fM, KOL.szary);
-      tekst(p, 'DOKUMENTACJA FOTOGRAFICZNA', 40, h - 135, 26, fB, KOL.navy);
-      tekst(p, 'Inwentaryzacja budowlana — stan istniejący', 40, h - 160, 13, fR, KOL.akcent);
+      tekst(p, tryb === 'robocza' ? 'ZESTAWIENIE ZMIAN I UWAG' : 'DOKUMENTACJA FOTOGRAFICZNA', 40, h - 135, 26, fB, KOL.navy);
+      tekst(p, tryb === 'robocza' ? 'Inwentaryzacja budowlana — różnice względem rysunku (materiał roboczy)' : 'Inwentaryzacja budowlana — stan istniejący', 40, h - 160, 13, fR, KOL.akcent);
+      const zaw = tryb === 'robocza' ? `${Zm.length} zmian i uwag (Z) · ${arkusze.length} plan(y) roboczy(e)`
+        : tryb === 'docelowa' ? `${zdjecia.length} zdjęć · ${F.length} punktów foto (F) · ${ZmF.length} zmian ze zdjęciami (Z) · ${arkusze.length} arkusz(e) planu`
+        : `${zdjecia.length} zdjęć · ${F.length} punktów foto (F) · ${Zm.length} zmian i uwag (Z) · ${arkusze.length} plan(y)`;
       const wiersze = [['Obiekt', m.nazwa], ['Adres / lokalizacja', m.adres], ['Zamawiający', m.inwestor], ['Nr opracowania', m.nr], ['Autor', m.autor], ['Data wizji', m.data], ['Data wygenerowania', dataCzas(Date.now())],
-        ['Zawartość', `${zdjecia.length} zdjęć · ${F.length} punktów foto (F) · ${Zm.length} zmian i uwag (Z) · ${arkusze.length} plan(y)`], ['Plany', arkusze.map(a => a.nazwa).join('; ')]];
+        ['Zawartość', zaw], [tryb === 'docelowa' ? 'Plan' : 'Plany', arkusze.map(a => a.nazwa).join('; ')]];
       let y = h - 200;
       for (const [k, val] of wiersze) {
         tekst(p, k, 40, y, 9.5, fB, KOL.szary);
@@ -138,14 +153,19 @@ const Eksport = (() => {
       }
       y -= 8; p.drawRectangle({ x: 40, y: y - 88, width: w - 80, height: 92, color: hexRgb(KOL.tlo), borderColor: hexRgb(KOL.linia), borderWidth: 0.6 });
       tekst(p, 'JAK KORZYSTAĆ Z TEGO PLIKU', 54, y - 16, 8.5, fB, KOL.akcent);
-      ['• Plany: kliknij numer punktu (kółko F lub etykieta Z), aby otworzyć zdjęcie tego miejsca.',
+      (tryb === 'robocza' ? [
+        '• Każda pozycja Z to różnica między rysunkiem a stanem na obiekcie; kliknij wiersz zestawienia, aby zobaczyć ją na planie.',
+        '• Plany robocze: obrysy i wymiary naniesione w terenie na podkładzie sprzed poprawek.',
+        '• Wymiar z dalmierza („pomiar”) ma pierwszeństwo przed rysunkiem. Szkice odręczne wymagają interpretacji.',
+        '• Dane do CAD: pliki zmiany_<plan>.dxf (warstwy INW-*) i zmiany.json w paczce ZIP.'] : [
+        '• Plan: kliknij numer punktu (kółko F lub romb Z), aby otworzyć zdjęcie tego miejsca.',
         '• Strona zdjęcia: mini-plan pokazuje miejsce i kierunek zdjęcia; kliknij go, aby zobaczyć to miejsce na planie.',
-        '• Na dole każdej strony zdjęcia: poprzednie / spis zdjęć / plan / następne. Spis zdjęć i zestawienie zmian też są klikalne.',
-        '• Pełna rozdzielczość zdjęć: folder „zdjecia” w paczce ZIP — nazwy plików odpowiadają numerom w tym dokumencie.']
+        '• Na dole każdej strony zdjęcia: poprzednie / spis zdjęć / plan / następne. Spis zdjęć też jest klikalny.',
+        '• Pełna rozdzielczość zdjęć: folder „zdjecia” w paczce ZIP — nazwy plików odpowiadają numerom w tym dokumencie.'])
         .forEach((t, i) => tekst(p, t, 54, y - 34 - i * 14, 9.5));
-      tekst(p, 'Spis zdjęć', 40, 60, 10, fB, KOL.F); link(p, [38, 56, 40 + szer('Spis zdjęć', fB, 10) + 2, 72], strSpis[0]);
-      if (strZm.length) { tekst(p, 'Zestawienie zmian i uwag', 140, 60, 10, fB, KOL.F); link(p, [138, 56, 142 + szer('Zestawienie zmian i uwag', fB, 10), 72], strZm[0]); }
-      let x = 320; for (const a of arkusze) { const t = 'Plan: ' + a.nazwa; tekst(p, skroc(t, fB, 10, 200), x, 60, 10, fB, KOL.F); link(p, [x - 2, 56, x + Math.min(200, szer(t, fB, 10)) + 2, 72], strPlan.get(a.id)); x += Math.min(200, szer(t, fB, 10)) + 24; if (x > w - 120) break; }
+      const skroty = []; if (strSpis[0]) skroty.push(['Spis zdjęć', strSpis[0]]); if (strZm.length) skroty.push(['Zestawienie zmian i uwag', strZm[0]]);
+      for (const a of arkusze) skroty.push([(tryb === 'docelowa' ? '' : 'Plan: ') + a.nazwa, strPlan.get(a.id)]);
+      let x = 40; for (const [t0, cel] of skroty) { const tw = Math.min(200, szer(t0, fB, 10)); if (x + tw > w - 40) break; tekst(p, skroc(t0, fB, 10, 200), x, 60, 10, fB, KOL.F); link(p, [x - 2, 56, x + tw + 2, 72], cel); x += tw + 22; }
       stopka(p, 1, razem);
     }
     /* 4. Spis zdjęć */
@@ -154,7 +174,7 @@ const Eksport = (() => {
       const kol = [[40, 'Nr zdjęcia'], [112, 'Znacznik'], [170, 'Plan'], [290, 'Element'], [390, 'Opis'], [w - 76, 'Strona']];
       let y = h - 92; p.drawRectangle({ x: 36, y: y - 5, width: w - 72, height: 17, color: hexRgb('#e8e8e3') }); kol.forEach(([x, t]) => tekst(p, t.toUpperCase(), x, y, 7.5, fB, KOL.szary)); y -= 19;
       for (const [k, x] of zdjecia.slice(s * WIERSZE_SPISU, (s + 1) * WIERSZE_SPISU).entries()) {
-        const n = s * WIERSZE_SPISU + k, z = x.z, a = S.arkusze.find(q => q.id === z.arkuszId);
+        const n = s * WIERSZE_SPISU + k, z = x.z, mp = gdzie.get(z.id), a = mp ? mp.a : (tryb === 'docelowa' ? { nazwa: '— poza planem' } : S.arkusze.find(q => q.id === z.arkuszId));
         if (k % 2) p.drawRectangle({ x: 36, y: y - 5, width: w - 72, height: 16, color: hexRgb('#f6f5f0') });
         tekst(p, nrZdj(z, x.i), 40, y, 9, fM, kolor(z)); tekst(p, z.rodzaj === 'F' ? 'foto' : (TYPY[z.typZ] || '').split(' ')[0].toLowerCase(), 112, y, 8.5, fR, KOL.szary);
         tekst(p, skroc(a ? a.nazwa : '', fR, 8.5, 112), 170, y, 8.5); tekst(p, skroc(z.element, fR, 8.5, 94), 290, y, 8.5); tekst(p, skroc(z.opis, fR, 8.5, w - 76 - 396), 390, y, 8.5);
@@ -184,21 +204,23 @@ const Eksport = (() => {
     });
     /* 6. Plany z naniesionymi znacznikami */
     let ia = 0;
-    for (const a of arkusze) {
-      const p = strPlan.get(a.id), P = PODK.get(a.id); if (!p) continue;
+    for (const pl of plany) {
+      const a = pl.a, p = strPlan.get(a.id), P = PODK.get(a.id); if (!p) continue;
       postep(0.08 + 0.12 * (ia++ / Math.max(1, arkusze.length)), `Rysuję plan „${a.nazwa}”…`);
       wstawPodklad(p, P, P.pl.p, P.pl.ox, P.pl.oy, null);
-      const w = P.w, h = P.h, sk = skA(P), NAGL = naglA(P);
+      const w = P.w, h = P.h, sk = skA(P), NAGL = pl.naglowek ? naglA(P) : 0;
+      if (pl.naglowek) {
       p.drawRectangle({ x: 0, y: h, width: w, height: NAGL, color: hexRgb('#ffffff') });
       p.drawRectangle({ x: 0, y: h + NAGL - 5 * sk, width: w, height: 5 * sk, color: hexRgb(KOL.navy) });
       p.drawLine({ start: { x: 0, y: h }, end: { x: w, y: h }, thickness: 0.8, color: hexRgb(KOL.linia) });
       tekst(p, 'PLAN — ' + a.nazwa, 18 * sk, h + 30 * sk, 16 * sk, fB, KOL.navy);
-      tekst(p, `${m.nazwa || ''} · kliknij znacznik, aby otworzyć zdjęcie · TEK-INW`, 18 * sk, h + 13 * sk, 8.5 * sk, fR, KOL.szary);
-      let lx = w - 18 * sk; [['szkic', 'szkic'], ['uwaga', 'uwaga'], ['brak', 'nie istnieje'], ['nowy', 'nowy element'], ['wymiar', 'inny wymiar'], ['F', 'punkt foto']].forEach(([k, t]) => {
+      tekst(p, `${m.nazwa || ''} · ${tryb === 'robocza' ? 'kliknij oznaczenie zmiany, aby przejść do zestawienia' : 'kliknij znacznik, aby otworzyć zdjęcie'} · TEK-INW`, 18 * sk, h + 13 * sk, 8.5 * sk, fR, KOL.szary);
+      let lx = w - 18 * sk; [['szkic', 'szkic'], ['uwaga', 'uwaga'], ['brak', 'nie istnieje'], ['nowy', 'nowy element'], ['wymiar', 'inny wymiar'], ['F', 'punkt foto']].filter(([k]) => tryb !== 'robocza' || k !== 'F').forEach(([k, t]) => {
         const tw = szer(t, fR, 8.5 * sk); lx -= tw; tekst(p, t, lx, h + 22 * sk, 8.5 * sk); lx -= 14 * sk; p.drawRectangle({ x: lx, y: h + 21 * sk, width: 10 * sk, height: 8 * sk, color: hexRgb(KOL[k]) }); lx -= 14 * sk;
       });
+      }
       const r0 = promienPlanu(P);
-      for (const z of S.znaczniki.filter(q => q.arkuszId === a.id)) {
+      for (const z of pl.znaczniki) {
         const pts = z.geom.pkt.map(q => naPlanie(a, q)); const kol = hexRgb(kolor(z));
         let rect;
         if (z.rodzaj === 'F') {
@@ -212,9 +234,9 @@ const Eksport = (() => {
           const lw = r0 * 0.22;
           if (pts.length > 1) { const d = 'M' + pts.map(q => `${q[0]} ${h + NAGL - q[1]}`).join(' L') + (z.geom.zamkn ? ' Z' : ''); p.drawSvgPath(d, { x: 0, y: h + NAGL, borderColor: kol, borderWidth: lw, borderDashArray: z.typZ === 'brak' ? [lw * 3, lw * 2] : undefined }); }
           if (z.typZ === 'brak' && pts.length > 2) { const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]); p.drawLine({ start: { x: Math.min(...xs), y: Math.min(...ys) }, end: { x: Math.max(...xs), y: Math.max(...ys) }, thickness: lw * 0.6, color: kol }); p.drawLine({ start: { x: Math.min(...xs), y: Math.max(...ys) }, end: { x: Math.max(...xs), y: Math.min(...ys) }, thickness: lw * 0.6, color: kol }); }
-          if (z.typZ === 'uwaga') { const [x, y] = pts[0]; p.drawSvgPath(`M${x} ${h + NAGL - y - r0} L${x + r0} ${h + NAGL - y} L${x} ${h + NAGL - y + r0} L${x - r0} ${h + NAGL - y} Z`, { x: 0, y: h + NAGL, color: kol }); }
-          const [lx0, ly0] = z.typZ === 'wymiar' && pts.length === 2 ? [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2 + r0 * 1.3] : z.typZ === 'uwaga' ? [pts[0][0] + r0 * 2.2, pts[0][1] + r0] : [pts[0][0], pts[0][1] + r0 * 1.3];
-          let t = 'Z' + parseInt(z.nr.slice(2), 10); if (z.typZ === 'wymiar' && Number.isFinite(z.wymPom)) t += ' · ' + opisWymiaru(z, S, R, true);
+          if (z.typZ === 'uwaga' || z._punktowy) { const [x, y] = pts[0]; p.drawSvgPath(`M${x} ${h + NAGL - y - r0} L${x + r0} ${h + NAGL - y} L${x} ${h + NAGL - y + r0} L${x - r0} ${h + NAGL - y} Z`, { x: 0, y: h + NAGL, color: kol }); }
+          const [lx0, ly0] = z.typZ === 'wymiar' && pts.length === 2 ? [(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2 + r0 * 1.3] : (z.typZ === 'uwaga' || z._punktowy) ? [pts[0][0] + r0 * 2.2, pts[0][1] + r0] : [pts[0][0], pts[0][1] + r0 * 1.3];
+          let t = 'Z' + parseInt(z.nr.slice(2), 10); if (z.typZ === 'wymiar' && !z._punktowy && Number.isFinite(z.wymPom)) t += ' · ' + opisWymiaru(z, S, R, true);
           const fs = r0 * 0.95, tw = szer(t, fB, fs) + fs;
           p.drawRectangle({ x: lx0 - tw / 2, y: ly0 - fs * 0.55, width: tw, height: fs * 1.5, color: kol, borderColor: hexRgb('#ffffff'), borderWidth: fs * 0.1 });
           tekst(p, t, lx0 - tw / 2 + fs / 2, ly0 - fs * 0.18, fs, fB, '#ffffff');
@@ -223,17 +245,17 @@ const Eksport = (() => {
         const cel = pierwszeZdj.has(z.id) ? strZdj[pierwszeZdj.get(z.id)] : (z.rodzaj === 'Z' && strZm.length ? strZm[Math.floor(Zm.indexOf(z) / WIERSZE_ZM)] : null);
         if (cel && rect) link(p, rect, cel);
       }
-      stopka(p, nrStrony(p), razem, 'plan');
+      if (pl.naglowek) stopka(p, nrStrony(p), razem, 'plan'); // arkusz docelowy PDF zostaje w oryginalnej postaci (bez nagłówka i stopki)
     }
     /* 7. Strony zdjęć */
     const jakosc = opcje.jakoscPdf || 1600;
     for (const [n, x] of zdjecia.entries()) {
       postep(0.2 + 0.75 * n / Math.max(1, zdjecia.length), `Zdjęcie ${n + 1} z ${zdjecia.length}…`);
-      const p = strZdj[n], [w, h] = A4, z = x.z, a = S.arkusze.find(q => q.id === z.arkuszId), P = a && PODK.get(a.id);
+      const p = strZdj[n], [w, h] = A4, z = x.z, mp = gdzie.get(z.id), a = mp && mp.a, P = a && PODK.get(a.id), zg = mp ? mp.z : z;
       const kz = kolor(z);
       p.drawRectangle({ x: 0, y: h - 5, width: w, height: 5, color: hexRgb(KOL.navy) });
       tekst(p, nrZdj(z, x.i), 28, h - 34, 17, fB, kz);
-      const podt = [z.rodzaj === 'F' ? 'Punkt fotograficzny' : (TYPY[z.typZ] || 'Zmiana'), z.element, a && a.nazwa].filter(Boolean).join(' · ');
+      const podt = [z.rodzaj === 'F' ? 'Punkt fotograficzny' : (TYPY[z.typZ] || 'Zmiana'), z.element, a ? a.nazwa : (S.arkusze.find(q => q.id === z.arkuszId) || {}).nazwa].filter(Boolean).join(' · ');
       tekst(p, skroc(podt, fR, 10, 520), 28 + szer(nrZdj(z, x.i), fB, 17) + 12, h - 33, 10, fR, KOL.szary);
       tekst(p, `zdjęcie ${x.i + 1} z ${z.zdjecia.length}`, w - 28 - szer(`zdjęcie ${x.i + 1} z ${z.zdjecia.length}`, fR, 9), h - 33, 9, fR, KOL.szary);
       // zdjęcie
@@ -250,28 +272,32 @@ const Eksport = (() => {
       const mx = 590, mw = w - 28 - mx, mh = 186, my = h - 96 - mh + 34;
       p.drawRectangle({ x: mx, y: my, width: mw, height: mh, color: hexRgb('#ffffff'), borderColor: hexRgb(KOL.linia), borderWidth: 0.8 });
       if (P) {
-        const c = z.geom.pkt[0], okno = clamp(Math.max(P.w, P.h) / 7, 60, 900) / P.pl.p, pk = Math.min(mw, mh) / okno; // okno w jednostkach arkusza
+        const c = zg.geom.pkt[0], okno = clamp(Math.max(P.w, P.h) / 7, 60, 900) / P.pl.p, pk = Math.min(mw, mh) / okno; // okno w jednostkach arkusza
         const ox = mx + mw / 2 - c[0] * pk, oy = my + mh / 2 + c[1] * pk;
         wstawPodklad(p, P, pk, ox, oy, [mx, my, mw, mh]);
         const S2 = (q) => [ox + q[0] * pk, oy - q[1] * pk];
-        const pts = z.geom.pkt.map(S2), kk = hexRgb(kz);
+        const pts = zg.geom.pkt.map(S2), kk = hexRgb(kz);
         if (z.rodzaj === 'F') {
           const [X, Y] = pts[0];
-          if (z.kier !== null && z.kier !== undefined) p.drawSvgPath(klin(X, h - Y, 46, z.kier), { x: 0, y: h, color: hexRgb('#22C3E6'), opacity: 0.3, borderColor: kk, borderWidth: 0.8 });
+          if (zg.kier !== null && zg.kier !== undefined) p.drawSvgPath(klin(X, h - Y, 46, zg.kier), { x: 0, y: h, color: hexRgb('#22C3E6'), opacity: 0.3, borderColor: kk, borderWidth: 0.8 });
           p.drawCircle({ x: X, y: Y, size: 6, color: kk, borderColor: hexRgb('#ffffff'), borderWidth: 1.2 });
         } else if (pts.length > 1) {
-          const d = 'M' + pts.map(q => `${clamp(q[0], mx - 50, mx + mw + 50)} ${h - clamp(q[1], my - 50, my + mh + 50)}`).join(' L') + (z.geom.zamkn ? ' Z' : '');
+          const d = 'M' + pts.map(q => `${clamp(q[0], mx - 50, mx + mw + 50)} ${h - clamp(q[1], my - 50, my + mh + 50)}`).join(' L') + (zg.geom.zamkn ? ' Z' : '');
           p.pushOperators(pushGraphicsState(), rectangle(mx, my, mw, mh), clip(), endPath()); p.drawSvgPath(d, { x: 0, y: h, borderColor: kk, borderWidth: 2 }); p.pushOperators(popGraphicsState());
-        } else p.drawCircle({ x: pts[0][0], y: pts[0][1], size: 5, color: kk });
+        } else { const [X, Y] = pts[0]; p.drawSvgPath(`M${X} ${h - Y - 7} L${X + 7} ${h - Y} L${X} ${h - Y + 7} L${X - 7} ${h - Y} Z`, { x: 0, y: h, color: kk, borderColor: hexRgb('#ffffff'), borderWidth: 1 }); }
         const fitR = (() => { const pp = naPlanie(a, c), r = clamp(Math.max(P.w, P.h) / 12, 40, 1200); return [pp[0] - r, pp[1] - r * 0.65, pp[0] + r, pp[1] + r * 0.65]; })();
         link(p, [mx, my, mx + mw, my + mh], strPlan.get(a.id), fitR);
         tekst(p, 'Miejsce na planie — kliknij, aby powiększyć', mx, my - 11, 7.5, fR, KOL.szary);
+      } else {
+        p.drawRectangle({ x: mx, y: my, width: mw, height: mh, color: hexRgb(KOL.tlo) });
+        zawin(tryb === 'docelowa' ? 'Miejsce tego zdjęcia leży poza zakresem planu.' : 'Brak podkładu dla tego znacznika.', fR, 9, mw - 30, 3).forEach((t, i) => tekst(p, t, mx + 15, my + mh / 2 + 4 - i * 12, 9, fR, KOL.szary));
       }
       // metryczka
       let y = my - 32; const kv = (k, val, max = 3) => { tekst(p, k.toUpperCase(), mx, y, 7, fB, KOL.szary); y -= 11; const l = zawin(val || '—', fR, 9, mw, max); l.forEach(t => { tekst(p, t, mx, y, 9); y -= 11; }); y -= 5; };
       kv('Element / kategoria', [z.element, z.kategoria].filter(Boolean).join(' · ') || '—', 2);
-      const wsp = polozenie(z, a, R, S); if (wsp) kv('Położenie (układ rysunku)', wsp, 1);
-      if (z.rodzaj === 'F' && z.kier !== null && z.kier !== undefined) kv('Kierunek zdjęcia', kierunekOpis(z, a, R), 1);
+      const aW = a || S.arkusze.find(q => q.id === z.arkuszId), zW = a ? zg : z; // współrzędne w układzie planu z tego dokumentu
+      const wsp = polozenie(zW, aW, R, S); if (wsp) kv('Położenie (układ rysunku)', wsp, 1);
+      if (z.rodzaj === 'F' && zW.kier !== null && zW.kier !== undefined) kv('Kierunek zdjęcia', kierunekOpis(zW, aW, R), 1);
       if (z.typZ === 'wymiar') kv('Wymiar', opisWymiaru(z, S, R), 2);
       kv('Wykonano', dataCzas(rek ? rek.czas : z.utw), 1);
       kv('Opis', z.opis || '—', Math.max(2, Math.floor((y - 60) / 11)));
@@ -406,11 +432,12 @@ const Eksport = (() => {
 
   /* ---------- zestawienia CSV, dane dla AI ---------- */
   function csv(wiersze) { const q = (v) => { const s = String(v ?? ''); return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }; return '﻿' + wiersze.map(w => w.map(q).join(';')).join('\r\n') + '\r\n'; }
-  function zestawienia(S, R) {
+  function zestawienia(S, R, planDocelowy) { // planDocelowy: Map(id znacznika → nazwa arkusza docelowego) — opcjonalnie
     const { zdjecia, Zm } = uporzadkuj(S); const ark = (id) => (S.arkusze.find(a => a.id === id) || {}).nazwa || '';
     const wsp = (z) => { const r = R.get(z.arkuszId); if (!r || !r.T) return ['', '']; const w = Geom.zastosuj(r.T, ...z.geom.pkt[0]); return [liczba(w[0] * r.k / 1000, 3), liczba(w[1] * r.k / 1000, 3)]; };
-    const zd = [['Nr zdjęcia', 'Plik', 'Znacznik', 'Rodzaj', 'Plan', 'Element', 'Kategoria', 'X [m]', 'Y [m]', 'Opis']];
-    for (const x of zdjecia) { const [X, Y] = wsp(x.z); zd.push([nrZdj(x.z, x.i), 'zdjecia/' + plikZdj(x.z, x.i), x.z.nr, x.z.rodzaj === 'F' ? 'foto' : TYPY[x.z.typZ], ark(x.z.arkuszId), x.z.element, x.z.kategoria, X, Y, x.z.opis]); }
+    const pd = planDocelowy instanceof Map;
+    const zd = [['Nr zdjęcia', 'Plik', 'Znacznik', 'Rodzaj', 'Plan (teren)', ...(pd ? ['Plan docelowy'] : []), 'Element', 'Kategoria', 'X [m]', 'Y [m]', 'Opis']];
+    for (const x of zdjecia) { const [X, Y] = wsp(x.z); zd.push([nrZdj(x.z, x.i), 'zdjecia/' + plikZdj(x.z, x.i), x.z.nr, x.z.rodzaj === 'F' ? 'foto' : TYPY[x.z.typZ], ark(x.z.arkuszId), ...(pd ? [planDocelowy.get(x.z.id) || 'poza planem'] : []), x.z.element, x.z.kategoria, X, Y, x.z.opis]); }
     const zm = [['Nr', 'Rodzaj', 'Plan', 'Element', 'Kategoria', 'Źródło', 'Wymiar z rysunku [mm]', 'Pomiar [mm]', 'Różnica [mm]', 'X [m]', 'Y [m]', 'Opis', 'Zdjęcia']];
     for (const z of Zm) { const rys = z.typZ === 'wymiar' ? wymRysMm(z, R) : NaN, [X, Y] = wsp(z); zm.push([z.nr, TYPY[z.typZ], ark(z.arkuszId), z.element, z.kategoria, z.zrodlo, Number.isFinite(rys) ? Math.round(rys) : '', Number.isFinite(z.wymPom) ? Math.round(z.wymPom) : '', Number.isFinite(rys) && Number.isFinite(z.wymPom) ? Math.round(z.wymPom - rys) : '', X, Y, z.opis, (z.zdjecia || []).map((_, i) => plikZdj(z, i)).join(', ')]); }
     return { zdjecia: csv(zd), zmiany: csv(zm) };
@@ -449,12 +476,14 @@ W załączeniu: zmiany.json (lista zmian z TEK-INW), pliki zmiany_*.dxf (podglą
     const pliki = []; const enc = (s) => fflate.strToU8(s);
     const baza = nazwaPl(S.meta.nr || S.meta.nazwa, 40);
     const { zdjecia } = uporzadkuj(S);
-    if (opcje.pdf) { const pdf = await fotodokumentacja(S, R, (f, t) => postep(f * 0.7, t), opcje); pliki.push([`${baza}_fotodokumentacja.pdf`, pdf, false]); }
+    const czPdf = opcje.pdfRoboczy ? 0.6 : 0.7;
+    if (opcje.pdf) { const pdf = await fotodokumentacja(S, R, (f, t) => postep(f * czPdf, t), opcje); pliki.push([`${baza}_fotodokumentacja.pdf`, pdf, false]); }
+    if (opcje.pdfRoboczy) { const pdf = await fotodokumentacja(S, R, (f, t) => postep(czPdf + f * 0.1, 'Zestawienie zmian: ' + t), { tryb: 'robocza', plany: opcje.planyRobocze }); pliki.push([`${baza}_zmiany_robocze.pdf`, pdf, false]); }
     postep(0.72, 'Dodaję zdjęcia…');
     if (opcje.zdjecia || opcje.kopia) {
       for (const [k, x] of zdjecia.entries()) { const rek = await Baza.zdjecie(x.id); if (rek) pliki.push(['zdjecia/' + plikZdj(x.z, x.i), new Uint8Array(rek.dane), false]); if (k % 20 === 19) { postep(0.72 + 0.1 * k / zdjecia.length, `Zdjęcia ${k + 1}/${zdjecia.length}…`); await czekaj(0); } }
     }
-    if (opcje.zestawienia) { const z = zestawienia(S, R); pliki.push(['zestawienie_zdjec.csv', enc(z.zdjecia), true], ['zestawienie_zmian.csv', enc(z.zmiany), true]); }
+    if (opcje.zestawienia) { const z = zestawienia(S, R, opcje.planDocelowy); pliki.push(['zestawienie_zdjec.csv', enc(z.zdjecia), true], ['zestawienie_zmian.csv', enc(z.zmiany), true]); }
     if (opcje.dxf) {
       for (const a of S.arkusze) { const r = R.get(a.id); if (!r || !S.znaczniki.some(z => z.arkuszId === a.id)) continue; pliki.push([`zmiany_${nazwaPl(a.nazwa, 30)}.dxf`, enc(dxfZmian(S, a, r)), true]); }
       pliki.push(['zmiany.json', enc(JSON.stringify(daneDlaAI(S, R), null, 1)), true], ['PROMPT_naniesienie_zmian.txt', enc(PROMPT(S)), true]);
@@ -481,7 +510,7 @@ Projekt: ${S.meta.nazwa || ''}   Nr: ${S.meta.nr || ''}   Autor: ${S.meta.autor 
 Wygenerowano: ${dataCzas(Date.now())} w ${APP.nazwa} ${APP.wersja}
 
 ZAWARTOŚĆ
-${o.pdf ? '• *_fotodokumentacja.pdf — plany ze znacznikami + strona dla każdego zdjęcia; odnośniki wewnątrz pliku (klikalne numery, mini-plany, nawigacja).\n' : ''}${o.zdjecia || o.kopia ? '• zdjecia\\ — zdjęcia w rozdzielczości zapisanej w aplikacji; nazwa pliku = numer znacznika i kolejny numer zdjęcia (F-012_1.jpg).\n' : ''}${o.zestawienia ? '• zestawienie_zdjec.csv, zestawienie_zmian.csv — tabele do Excela (separator: średnik, kodowanie UTF-8).\n' : ''}${o.dxf ? '• zmiany_<plan>.dxf — znaczniki i zmiany w układzie współrzędnych rysunku (warstwy INW-*). W ZWCAD: wstaw jako odnośnik (XREF) lub blok w punkcie 0,0, skala 1.\n• zmiany.json + PROMPT_naniesienie_zmian.txt — dane dla Claude (TEK-RYSOWNIK) do naniesienia zmian na DWG.\n' : ''}${o.kopia ? '• _kopia_projektu\\ — pełna kopia projektu; całą paczkę ZIP można wczytać w TEK-INW na innym urządzeniu (Projekty → Importuj).\n' : ''}
+${o.pdf ? (o.tryb === 'docelowa' ? '• *_fotodokumentacja.pdf — plan docelowy (po poprawkach) z punktami zdjęć + strona dla każdego zdjęcia; odnośniki wewnątrz pliku (klikalne numery, mini-plany, nawigacja).\n' : '• *_fotodokumentacja.pdf — plany ze znacznikami + strona dla każdego zdjęcia; odnośniki wewnątrz pliku (klikalne numery, mini-plany, nawigacja).\n') : ''}${o.pdfRoboczy ? '• *_zmiany_robocze.pdf — zestawienie zmian Z i plany robocze z obrysami (materiał dla projektanta, bez stron zdjęć).\n' : ''}${o.zdjecia || o.kopia ? '• zdjecia\\ — zdjęcia w rozdzielczości zapisanej w aplikacji; nazwa pliku = numer znacznika i kolejny numer zdjęcia (F-012_1.jpg).\n' : ''}${o.zestawienia ? '• zestawienie_zdjec.csv, zestawienie_zmian.csv — tabele do Excela (separator: średnik, kodowanie UTF-8).\n' : ''}${o.dxf ? '• zmiany_<plan>.dxf — znaczniki i zmiany w układzie współrzędnych rysunku (warstwy INW-*). W ZWCAD: wstaw jako odnośnik (XREF) lub blok w punkcie 0,0, skala 1.\n• zmiany.json + PROMPT_naniesienie_zmian.txt — dane dla Claude (TEK-RYSOWNIK) do naniesienia zmian na DWG.\n' : ''}${o.kopia ? '• _kopia_projektu\\ — pełna kopia projektu; całą paczkę ZIP można wczytać w TEK-INW na innym urządzeniu (Projekty → Importuj).\n' : ''}
 WARSTWY DXF
 INW-FOTO (punkty i kierunki zdjęć), INW-WYMIAR (inne wymiary: rysunek / pomiar / różnica), INW-NOWE (nowe elementy),
 INW-BRAK (elementy nieistniejące — obrys i przekreślenie), INW-UWAGI, INW-SZKIC (szkice odręczne — do interpretacji), INW-NUMERY.

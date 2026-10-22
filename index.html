@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b1622">
+<meta name="theme-color" content="#0d1830">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -17,7 +17,14 @@
 <link rel="stylesheet" href="css/inw.css">
 </head>
 <body>
-<header class="appbar"><div class="brand" id="brand"></div><nav id="tabs"></nav><a class="marka" id="marka" href="https://tektoria.pl" target="_blank" rel="noopener" title="TEKTORIA — oprogramowanie dla inżynierów"></a></header>
+<header class="topbar">
+  <button class="brand" id="brand" data-act="do-startu" title="Ekran główny — lista projektów"><img src="icons/favicon.svg" alt=""><span class="brandtext"><span class="brandname">TEK-<em>INW</em></span><span class="brandcaption">TEKTORIA · INWENTARYZACJA BUDOWLANA</span></span></button>
+  <span class="pnazwa" id="pnazwa" title="Bieżący projekt"></span>
+  <span class="spacer"></span>
+  <span class="verpill" id="verPill"></span>
+  <a class="marka" id="marka" href="https://tektoria.pl" target="_blank" rel="noopener" title="TEKTORIA — oprogramowanie dla inżynierów"></a>
+</header>
+<nav class="tabsnav" id="tabs" aria-label="Zakładki projektu"></nav>
 <main><div id="view"></div></main>
 <dialog id="dlg"></dialog>
 <div id="toast" class="toast"></div>
