@@ -328,31 +328,55 @@ function vPlan() {
       <div class="planbar">
         <select id="arkSel" aria-label="Podkład">${(() => { const op = (x) => `<option value="${x.id}"${x.id === a.id ? ' selected' : ''}>${esc(x.nazwa)}</option>`, rob = S.arkusze.filter(x => !docelowy(x)), doc = S.arkusze.filter(docelowy);
           return doc.length ? `<optgroup label="Podkłady robocze (teren)">${rob.map(op).join('')}</optgroup><optgroup label="Plan docelowy (po poprawkach)">${doc.map(op).join('')}</optgroup>` : rob.map(op).join(''); })()}</select>
-        <button class="btn sm" data-act="plan-dopasuj" title="Pokaż cały rysunek">Cały rysunek</button>
+        <button class="btn sm ik" data-act="plan-dopasuj" title="Pokaż cały rysunek">${ikona('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/>')}</button>
         <span class="sep"></span>
-        <label class="tg" id="tgSnap" title="Przyciąganie do narożników, końców i skrzyżowań linii (DXF i PDF wektorowy)"><input type="checkbox" id="opSnap" checked><span>Przyciąganie</span></label>
-        <label class="tg" title="Linie poziome i pionowe w układzie rysunku"><input type="checkbox" id="opOrto"><span>Orto</span></label>
-        <label class="tg" title="Palec tylko przesuwa i powiększa plan; punkty stawia rysik"><input type="checkbox" id="opPalec"><span>Rysik rysuje</span></label>
-        <label class="tg" id="tgKolory" title="Kolory warstw DXF"><input type="checkbox" id="opKolory"><span>Kolory</span></label>
+        <label class="tg" id="tgSnap" title="Przyciąganie do narożników, końców i skrzyżowań linii (DXF i PDF wektorowy) · F3"><input type="checkbox" id="opSnap" checked><span>Przyciąganie</span></label>
+        <label class="tg" title="Linie poziome i pionowe w układzie rysunku · F8"><input type="checkbox" id="opOrto"><span>Orto</span></label>
         <span class="sep"></span>
         <button class="btn sm" data-act="cofnij" title="Cofnij ostatnią zmianę (Ctrl+Z)">Cofnij</button>
         <button class="btn sm" data-act="ark-kalibruj-plan" id="btnKal">Kalibruj</button>
-        <button class="btn sm" data-act="ark-warstwy-plan" id="btnWar">Warstwy</button>
         <button class="btn sm" data-act="ark-obszar" id="btnObszar" title="Prostokąt, w którym leży rzut (bez tabelki rysunkowej i legendy) — tylko tam trafiają punkty">Obszar rzutu</button>
-        <button class="btn sm" data-act="ark-obszar-usun" id="btnObszarX" title="Usuń obszar rzutu — punkty trafiają na cały arkusz">× obszar</button>
-        <span class="status" id="status"></span>
+        <span class="spacer"></span>
+        <div class="wiecej"><button class="btn sm" data-act="plan-menu" title="Więcej ustawień planu">Więcej ▾</button>
+          <div class="planmenu" id="planMenu">
+            <label class="tg" title="Palec tylko przesuwa i powiększa plan; punkty stawia rysik"><input type="checkbox" id="opPalec"><span>Rysik rysuje (palec tylko przesuwa)</span></label>
+            <label class="tg" id="tgKolory" title="Kolory warstw DXF"><input type="checkbox" id="opKolory"><span>Kolory warstw DXF</span></label>
+            <button class="btn sm" data-act="ark-warstwy-plan" id="btnWar">Warstwy…</button>
+            <button class="btn sm" data-act="ark-obszar-usun" id="btnObszarX" title="Usuń obszar rzutu — punkty trafiają na cały arkusz">Usuń obszar rzutu</button>
+          </div></div>
+        <button class="btn sm" data-act="plan-lista" id="btnLista" title="Znaczniki na tym planie">☰ Znaczniki</button>
+        <button class="btn sm ik" data-act="plan-pelny" id="btnPelny" title="Pełny ekran — ukryj pasek aplikacji i zakładki">${ikona('<path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5M9 9l-5-5M15 9l5-5M15 15l5 5M9 15l-5 5"/>')}</button>
       </div>
-      <div class="planhost" id="planHost"></div>
+      <div class="planstage">
+        <div class="planhost" id="planHost"></div>
+        <span class="status" id="status"></span>
+        <aside class="panel" id="panel"></aside>
+      </div>
       <div class="wpis" id="wpis"></div>
     </div>
-    <aside class="panel" id="panel"></aside>
   </div>`;
 }
+/* panel znacznika nad rysunkiem (iPad): chowa się przy wyborze narzędzia i dotknięciu rysunku; na szerokim ekranie stoi obok */
+const panelNakladka = () => { const p = $('#panel'); return !!p && getComputedStyle(p).position === 'absolute'; };
+let odslonieto = null; // przesunięcie rysunku zrobione po to, żeby znacznik nie był pod panelem — cofane po zamknięciu panelu
+function zwinPanel(przywroc) {
+  const p = $('#panel'); if (!p || !panelNakladka()) return;
+  p.classList.remove('on', 'lista');
+  if (przywroc && odslonieto) { const v = Plan.widok(), o = odslonieto.v; if (Math.abs(v.tx - o.tx) < 0.5 && Math.abs(v.ty - o.ty) < 0.5 && v.s === o.s) Plan.przesunWidok(-odslonieto.dx, 0); } // tylko gdy widok się nie zmienił
+  odslonieto = null;
+}
+function odslon(id) { // znacznik pod wysuniętym panelem → przesuwamy rysunek w lewo (na czas edycji)
+  const p = $('#panel'), host = $('#planHost'); if (!p || !host || !panelNakladka() || !p.classList.contains('on')) return;
+  const z = znacznikiArkusza(arkBiez()).find(x => x.id === id); if (!z) return;
+  const v = Plan.widok(), x = z.geom.pkt[0][0] * v.s + v.tx, W = host.clientWidth, pw = p.offsetWidth;
+  if (x > W - pw - 40) { const dx = -(x - (W - pw) / 2); Plan.przesunWidok(dx, 0); odslonieto = { dx: (odslonieto ? odslonieto.dx : 0) + dx, v: Plan.widok() }; }
+}
+const pelnyEkran = (wl) => { document.body.classList.toggle('pelny', wl); const b = $('#btnPelny'); if (b) { b.classList.toggle('on', wl); b.title = wl ? 'Zakończ pełny ekran' : 'Pełny ekran — ukryj pasek aplikacji i zakładki'; } localStorageSet('tek-inw-pelny', wl ? '1' : ''); };
 let narzBiez = 'przegladaj', podtrybBiez = 'linia', kalibracjaArk = null;
 async function montujPlan() {
   const host = $('#planHost'); if (!host) return;
   Plan.montuj(host, {
-    naFoto: utworzFoto, naKoniec: utworzZmiane, naWybor: (id) => { wybrany = id; odswiezPanel(); },
+    naFoto: utworzFoto, naKoniec: utworzZmiane, naWybor: (id) => { wybrany = id; odswiezPanel(); odslon(id); },
     naKalibracje: dokonczKalibracje, naPomiar: (p) => { const r = rArk(); if (!r || !r.T) return toast('Pomiar w jednostkach wymaga kalibracji podkładu.', true); status(`Pomiar: ${naUz(Geom.odl(swiatMm(r, p[0]), swiatMm(r, p[1])))} ${jedn()}`); },
     naPunkty: () => odswiezWpis(), naWidok: (v) => { const a = S && S.arkusze.find(x => x.id === arkId); if (a) { a.widok = v; zapisz(); } },
     naCelownik: (c) => { const r = rArk(); if (r && r.T) { const w = swiatMm(r, [c.x, c.y]); status(`X ${naUz(w[0])} · Y ${naUz(w[1])} ${jedn()}${c.snap ? ' · przyciągnięto' : ''}`); } },
@@ -363,7 +387,9 @@ async function montujPlan() {
     naPrzesun: przesunZnacznik, naObszar: ustawObszar
   });
   planZamontowany = true;
-  $('#arkSel').onchange = (e) => { arkId = e.target.value; S.ostatniArkusz = arkId; zapisz(); pokazArkusz(); };
+  $('#arkSel').onchange = (e) => { arkId = e.target.value; S.ostatniArkusz = arkId; wybrany = null; zapisz(); pokazArkusz(); };
+  host.addEventListener('pointerdown', () => zwinPanel(false), true); // dotknięcie rysunku chowa panel (wybór znacznika otworzy go ponownie)
+  pelnyEkran(localStorageGet('tek-inw-pelny') === '1');
   $('#opSnap').onchange = (e) => Plan.opcja('snap', e.target.checked);
   $('#opOrto').onchange = (e) => Plan.opcja('orto', e.target.checked);
   $('#opPalec').onchange = (e) => { Plan.opcja('palec', e.target.checked); Plan.opcja('tylkoRysik', e.target.checked); };
@@ -403,7 +429,7 @@ const arkBiez = () => S.arkusze.find(x => x.id === arkId);
 function odswiezPlan() { if (tab !== 'plan' || !planZamontowany) return; Plan.znaczniki(znacznikiArkusza(arkBiez())); Plan.zaznacz(wybrany); odswiezPanel(); const b = $('.tab[data-tab=lista]'); if (b) b.innerHTML = '4. Zestawienie' + (S.znaczniki.length ? ` <span class="badge">${S.znaczniki.length}</span>` : ''); }
 function status(t) { const s = $('#status'); if (s) s.textContent = t || ''; }
 function wybierzNarzedzie(n) {
-  narzBiez = n; kalibracjaArk = null; $$('#narz .nb').forEach(b => b.classList.toggle('on', b.dataset.narz === n));
+  narzBiez = n; kalibracjaArk = null; zwinPanel(true); $$('#narz .nb').forEach(b => b.classList.toggle('on', b.dataset.narz === n));
   Plan.narzedzie(n, podtrybBiez); odswiezWpis();
   const opisy = { przesunZn: docelowy(arkBiez()) ? 'Przeciągnij punkt w poprawne miejsce. Zmiana dotyczy tylko planu docelowego — położenie z terenu zostaje.' : 'Przeciągnij znacznik w poprawne miejsce (wszystkie jego punkty przesuną się razem).', przegladaj: 'Przesuwaj jednym palcem, powiększaj dwoma. Stuknij znacznik, aby go wybrać.', foto: 'Stuknij miejsce zdjęcia. Przeciągnij od miejsca w stronę, w którą patrzy aparat — zapisze się kierunek.', wymiar: 'Wskaż dwa punkty elementu (palcem: celownik nad palcem, punkt po oderwaniu). Potem wpisz wynik z dalmierza.', nowy: 'Wskaż punkty nowego elementu albo wpisz współrzędne w polu na dole.', brak: 'Obrysuj element, którego nie ma na obiekcie.', uwaga: 'Wskaż miejsce uwagi, opis dodasz w panelu.', szkic: 'Rysuj palcem lub rysikiem. Szkic nie jest pomiarem.', pomiar: 'Wskaż dwa punkty — długość pokaże się na pasku (nic się nie zapisuje).' };
   status(opisy[n] || '');
@@ -430,14 +456,14 @@ function utworzFoto(pos, kier) {
   if (docelowy(arkBiez())) return toast('Na planie docelowym nie dodaje się znaczników — stawiasz je w terenie na podkładzie roboczym.', true);
   migawka();
   const z = { id: uid('m'), nr: 'F-' + pad(S.seqF++, 3), rodzaj: 'F', arkuszId: arkId, geom: { typ: 'punkt', pkt: [pos] }, kier: kier ?? null, element: '', kategoria: '', opis: '', zdjecia: [], utw: Date.now(), zm: Date.now() };
-  S.znaczniki.push(z); wybrany = z.id; zapisz(true); odswiezPlan();
+  S.znaczniki.push(z); wybrany = z.id; zapisz(true); odswiezPlan(); odslon(z.id);
   if (S.ustaw.aparatOdRazu) zrobZdjecie(z.id, true);
 }
 function utworzZmiane({ typZ, geom }) {
   if (docelowy(arkBiez())) return toast('Na planie docelowym nie dodaje się znaczników — stawiasz je w terenie na podkładzie roboczym.', true);
   migawka();
   const z = { id: uid('m'), nr: 'Z-' + pad(S.seqZ++, 2), rodzaj: 'Z', typZ, arkuszId: arkId, geom, kier: null, element: '', kategoria: '', opis: '', zrodlo: typZ === 'wymiar' ? 'P' : 'O', wymPom: null, zdjecia: [], utw: Date.now(), zm: Date.now() };
-  S.znaczniki.push(z); wybrany = z.id; zapisz(true); odswiezPlan();
+  S.znaczniki.push(z); wybrany = z.id; zapisz(true); odswiezPlan(); odslon(z.id);
   if (typZ === 'wymiar') { const p = $('#zPom'); if (p) p.focus(); }
 }
 
@@ -685,6 +711,7 @@ function vInfo() {
 
 /* ---------- ZDARZENIA ---------- */
 document.addEventListener('click', async (e) => {
+  const m = $('#planMenu'); if (m && m.classList.contains('on') && !e.target.closest('.wiecej')) m.classList.remove('on');
   const t = e.target.closest('[data-tab]'); if (t && S) { tab = t.dataset.tab; render(); window.scrollTo(0, 0); return; }
   const b = e.target.closest('[data-act]'); if (!b) return;
   const act = b.dataset.act, id = b.dataset.id;
@@ -720,7 +747,10 @@ document.addEventListener('click', async (e) => {
     else if (act === 'pl-zakoncz') Plan.zakonczPolilinie(false);
     else if (act === 'pl-zamknij') Plan.zakonczPolilinie(true);
     else if (act === 'wpis-ok') wpiszPunkt();
-    else if (act === 'panel-zamknij') { wybrany = null; Plan.zaznacz(null); odswiezPanel(); }
+    else if (act === 'panel-zamknij') { wybrany = null; Plan.zaznacz(null); odswiezPanel(); zwinPanel(true); }
+    else if (act === 'plan-lista') { const p = $('#panel'); if (p) { if (p.classList.contains('on') || p.classList.contains('lista')) zwinPanel(true); else { wybrany = null; Plan.zaznacz(null); odswiezPanel(); p.classList.add('lista'); } } }
+    else if (act === 'plan-pelny') pelnyEkran(!document.body.classList.contains('pelny'));
+    else if (act === 'plan-menu') { const m = $('#planMenu'); if (m) m.classList.toggle('on'); }
     else if (act === 'znacznik-pokaz' || act === 'lista-pokaz') {
       const z = S.znaczniki.find(x => x.id === id); if (!z) return; wybrany = z.id;
       if (act === 'znacznik-pokaz' && !b.dataset.rob && tab === 'plan' && docelowy(arkBiez())) { const m = przydzial().get(z.id); if (m && m.a.id === arkId) { Plan.pokaz(m.p[0], m.p[1]); Plan.zaznacz(z.id); odswiezPanel(); return; } }

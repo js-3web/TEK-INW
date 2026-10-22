@@ -1,7 +1,7 @@
 /* TEK-INW — service worker (plik generowany przez zrodla/build.py — nie edytować ręcznie).
    Zapisuje pliki aplikacji w pamięci urządzenia przy pierwszym uruchomieniu; potem aplikacja działa bez internetu.
-   Nowa wersja = nowa nazwa pamięci (tek-inw-0.3.0); stara jest usuwana po aktywacji. */
-const CACHE = 'tek-inw-0.3.0';
+   Nowa wersja = nowa nazwa pamięci (tek-inw-0.3.1); stara jest usuwana po aktywacji. */
+const CACHE = 'tek-inw-0.3.1';
 const PLIKI = [
 "./",
 "css/baza.css",

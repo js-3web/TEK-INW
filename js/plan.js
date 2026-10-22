@@ -413,6 +413,7 @@ const Plan = (() => {
     opcja(k, val) { opcje[k] = val; if (k === 'kolory') odswiezTlo(); planuj(); },
     zaznacz(id) { zazn = id; planuj(); },
     widok: () => ({ ...v }),
+    przesunWidok(dx, dy) { v = { ...v, tx: v.tx + dx, ty: v.ty + dy }; odswiezTlo(); zmianaWidoku(); },
     znaczniki(lista) { Z = lista || []; planuj(); },
     arkusz: () => A,
     zniszcz() { anulujDetal(); A = null; host = null; g = null; gt = null; }

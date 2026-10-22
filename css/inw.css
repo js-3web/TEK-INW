@@ -1,39 +1,58 @@
 /* TEK-INW — elementy własne aplikacji (plan, narzędzia, panel znacznika) w szacie rodziny TEKTORIA.
    Rysunek (arkusz PDF / DXF) zostaje biały — znaczniki w mocnych kolorach leżą na białym papierze. */
-:root{--appbar:140px}
 html{-webkit-text-size-adjust:100%}
 body{overscroll-behavior:none}
 .btn,.tab,.nb,select,input{touch-action:manipulation}
 @media(pointer:coarse){.btn{min-height:44px}.btn.sm{min-height:36px}.x{padding:8px 12px}}
 
-/* plan: pełna wysokość okna, kompaktowy pasek i zakładki (iPad poziomo ma ok. 810 px wysokości) */
-body[data-view=plan]{overflow:hidden}
-body[data-view=plan] main{padding:0;max-width:none}
-body[data-view=plan] .topbar{min-height:56px;padding:4px 18px}
-body[data-view=plan] .brand img{height:40px;width:40px}
+/* plan (od 0.3.1): rysunek zajmuje całą wolną przestrzeń; panel znacznika wysuwa się nad rysunek i chowa,
+   gdy wybierasz narzędzie albo dotykasz rysunku; na szerokim ekranie (≥ 1400 px) panel stoi obok jako kolumna */
+body[data-view=plan]{overflow:hidden;height:100dvh;display:flex;flex-direction:column}
+body[data-view=plan] main{flex:1;min-height:0;padding:0;max-width:none;width:100%}
+body[data-view=plan] #view{height:100%}
+body[data-view=plan] .topbar{min-height:52px;padding-top:max(4px,env(safe-area-inset-top));padding-bottom:4px}
+body[data-view=plan] .brand img{height:38px;width:38px}
 body[data-view=plan] .brandcaption{display:none}
-body[data-view=plan] .tabsnav{padding:6px 18px 0;max-width:none}
-body[data-view=plan] .tab{min-height:38px;padding:7px 13px;font-size:13.5px;border-radius:12px 16px 0 0}
-.planwrap{display:grid;grid-template-columns:72px minmax(0,1fr) 350px;height:calc(100dvh - var(--appbar));gap:0}
-.narz{display:flex;flex-direction:column;gap:4px;padding:10px 7px;background:var(--panel);border-right:1px solid var(--line);overflow-y:auto}
-.nb{display:flex;flex-direction:column;align-items:center;gap:2px;background:none;border:1px solid transparent;color:var(--muted);border-radius:14px;padding:8px 2px 7px;cursor:pointer;font:800 .68rem var(--sans);position:relative}
+body[data-view=plan] .tabsnav{padding:4px 14px 0;max-width:none;width:100%;margin:0} /* w kolumnie flex „margin:auto” ścisnęłoby pasek do środka */
+body[data-view=plan] .tab{min-height:36px;padding:6px 12px;font-size:13.5px;border-radius:12px 16px 0 0}
+body.pelny[data-view=plan] .topbar,body.pelny[data-view=plan] .tabsnav{display:none}
+body.pelny[data-view=plan] .planbar{padding-top:max(6px,env(safe-area-inset-top))}
+body.pelny[data-view=plan] .narz{padding-top:max(10px,env(safe-area-inset-top))}
+.topbar{padding-top:max(8px,env(safe-area-inset-top))}
+.planwrap{display:grid;grid-template-columns:70px minmax(0,1fr);height:100%}
+.narz{display:flex;flex-direction:column;gap:3px;padding:8px 5px;background:var(--panel);border-right:1px solid var(--line);overflow-y:auto}
+.nb{display:flex;flex-direction:column;align-items:center;gap:2px;background:none;border:1px solid transparent;color:var(--muted);border-radius:14px;padding:7px 1px 6px;cursor:pointer;font:800 10.5px/1.15 var(--sans);letter-spacing:-.1px;position:relative}
+.nb span{max-width:100%;overflow:hidden;text-overflow:clip;white-space:nowrap}
 .nb svg{width:26px;height:26px}
 .nb:hover{background:var(--panel-2);color:var(--txt)}
 .nb.on{background:rgba(224,123,60,.18);border-color:rgba(224,123,60,.45);color:var(--orange-hi)}
 .planmid{display:flex;flex-direction:column;min-width:0;min-height:0}
-.planbar{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;padding:8px 12px;background:rgba(17,32,65,.92);border-bottom:1px solid var(--line)}
-.planbar select{width:auto;max-width:300px;min-height:36px;padding:5px 10px;font-size:13.5px;font-weight:700}
+.planbar{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;padding:6px 10px;background:rgba(17,32,65,.95);border-bottom:1px solid var(--line);position:relative;z-index:8}
+.planbar select{width:auto;max-width:230px;min-height:36px;padding:5px 10px;font-size:13.5px;font-weight:700}
 .planbar .sep{width:1px;height:24px;background:var(--line-3)}
+.planbar .spacer{flex:1}
+.planbar .ik{min-width:38px;padding:5px 8px}
+.planbar .ik svg{width:19px;height:19px}
+.planbar .btn.on{background:rgba(224,123,60,.18);border-color:rgba(224,123,60,.5);color:var(--orange-hi)}
 .tg{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;user-select:none;-webkit-user-select:none}
 .tg:hover{color:var(--txt)}
 .tg input{width:16px;height:16px}
-.status{flex:1 1 220px;font-family:var(--mono);font-size:12px;color:var(--muted-2);text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.planhost{position:relative;flex:1;min-height:0;touch-action:none;overflow:hidden;background:#0b1428}
+.wiecej{position:relative}
+.planmenu{display:none;position:absolute;right:0;top:calc(100% + 6px);min-width:250px;background:var(--dialog);border:1px solid var(--line-3);border-radius:16px;box-shadow:var(--shadow-2);padding:10px;flex-direction:column;align-items:stretch;gap:8px;z-index:30}
+.planmenu.on{display:flex}
+.planmenu .tg{padding:6px 4px;font-size:13.5px}
+.planstage{position:relative;flex:1;min-height:0;display:flex}
+.planhost{position:relative;flex:1;min-width:0;touch-action:none;overflow:hidden;background:#0b1428}
 .plan-cv{position:absolute;inset:0;display:block;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-.wpis{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 12px;background:var(--dialog);border-top:1px solid var(--line)}
-.wpisPole{flex:1 1 260px;width:auto;font-family:var(--mono);font-size:14px;min-height:38px}
+.status{position:absolute;left:10px;bottom:10px;max-width:min(680px,calc(100% - 20px));pointer-events:none;background:rgba(13,24,48,.88);border:1px solid var(--line);border-radius:10px;padding:6px 11px;font:13px/1.45 var(--sans);color:var(--txt);white-space:normal;z-index:3} /* podpowiedzi zawijają się w kilka linii — nie są ucinane */
+.status:empty{display:none}
+.wpis{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;padding:7px 10px;background:var(--dialog);border-top:1px solid var(--line)}
+.wpis .hint{flex:1 1 100%;font-size:13.5px;color:var(--muted)}
+.wpisPole{flex:1 1 240px;width:auto;font-family:var(--mono);font-size:14px;min-height:38px}
 .wpis .seg label{padding:5px 12px}
-.panel{background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding:16px 18px 32px;-webkit-overflow-scrolling:touch}
+.panel{position:absolute;top:0;right:0;bottom:0;width:min(370px,92%);z-index:6;background:var(--dialog);border-left:1px solid var(--line-3);box-shadow:-14px 0 34px rgba(0,0,0,.4);overflow-y:auto;padding:14px 16px 28px;-webkit-overflow-scrolling:touch;transform:translateX(104%);transition:transform .2s ease;visibility:hidden}
+.panel.on,.panel.lista{transform:none;visibility:visible}
+@media(min-width:1400px){.panel{position:relative;transform:none;visibility:visible;width:350px;flex:none;box-shadow:none;background:var(--panel);border-left:1px solid var(--line);transition:none}#btnLista{display:none}}
 .panel h2{font-size:19px}
 .panel .ph{display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--line);padding-bottom:10px;margin-bottom:14px}
 .panel .ph b{font-family:var(--mono);font-size:19px;font-weight:500}
@@ -54,11 +73,10 @@ body[data-view=plan] .tab{min-height:38px;padding:7px 13px;font-size:13.5px;bord
 .ostatnie .rf:hover{background:var(--panel-2)}
 .ostatnie .rf span{color:var(--muted)}
 .ostatnie .rf b{font-family:var(--mono);font-weight:500}
-@media(max-width:1000px){.planwrap{grid-template-columns:62px minmax(0,1fr)}.panel{position:fixed;left:62px;right:0;bottom:0;max-height:55dvh;border-left:none;border-top:2px solid var(--orange);border-radius:20px 20px 0 0;background:var(--dialog);box-shadow:0 -10px 30px rgba(0,0,0,.4);transform:translateY(calc(100% - 50px));transition:transform .2s;z-index:6}.panel.on{transform:none}}
-@media(max-width:560px){.planbar .tg span{font-size:12px}.status{flex-basis:100%;text-align:left}}
-/* iPad poziomo (1080 px) i mniejsze ekrany: oszczędzamy miejsce dla planu */
-@media(max-width:1280px){body[data-view=plan] .pnazwa,body[data-view=plan] .marka small{display:none}.planwrap{grid-template-columns:66px minmax(0,1fr) 310px}.planbar{gap:5px 8px;padding:6px 10px}.planbar .status{flex-basis:100%;text-align:left}}
-@media(max-width:1180px){body[data-view=plan] .marka{display:none}body[data-view=plan] .tab{padding:7px 10px}}
+/* węższe ekrany: oszczędzamy miejsce w pasku */
+@media(max-width:1280px){body[data-view=plan] .pnazwa,body[data-view=plan] .marka small{display:none}}
+@media(max-width:1180px){body[data-view=plan] .marka{display:none}body[data-view=plan] .tab{padding:6px 10px}}
+@media(max-width:900px){.planbar select{max-width:170px}}
 
 /* podkłady */
 .proj.ark{grid-template-columns:minmax(0,2.2fr) minmax(0,1.4fr) 0 auto;cursor:default}
