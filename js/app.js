@@ -132,7 +132,7 @@ async function przygotujArkusz(a, bezObrazu) {
     r = r || { id: a.id, typ: 'pdf', page, wym, w: wym.w, h: wym.h, bajty: new Uint8Array(pl.dane), k: 1 };
     if (!bezObrazu && !r.baza) r.baza = await PdfPodklad.obrazBazowy(page, iPad() ? 8e6 : 14e6);
   } else {
-    const dxf = Dxf.wczytaj(pl.dane);
+    const dxf = Dxf.wczytaj(pl.dane, a.Tswiat ? { poczatek: [a.Tswiat.e, a.Tswiat.f] } : {}); // podkład już używany: ten sam początek układu — znaczniki zostają na miejscu
     r = { id: a.id, typ: 'dxf', dxf, w: dxf.zasieg.maxx, h: dxf.zasieg.maxy, k: dxf.k };
     if (!a.warstwyWid) { a.warstwyWid = {}; for (const w of dxf.warstwy) if (!w.wid) a.warstwyWid[w.nazwa] = false; }
   }
@@ -255,7 +255,7 @@ function vPodklady() {
     <div class="drop" data-act="dodaj-podklad" data-rola="roboczy"><b>Dodaj podkład roboczy — stuknij lub przeciągnij plik</b><br><span class="hint">DXF (zalecany): współrzędne jak w ZWCAD, przyciąganie do narożników i skrzyżowań osi, eksport zmian 1:1. PDF: każdą stronę trzeba skalibrować dwoma punktami; z PDF wektorowego (eksport z CAD) działa też przyciąganie.</span></div>
     ${rob.length ? `<div class="plist">${rob.map(a => wierszArkusza(a, M)).join('')}</div>`
       : '<div class="pusto"><b>Brak podkładów roboczych</b>Przygotuj w ZWCAD czysty rzut (osie, słupy, ściany, bramy — bez kreskowań i odnośników) i zapisz jako DXF.</div>'}
-    <details><summary>Jak przygotować DXF w ZWCAD 2022</summary><ol class="steps"><li>Zrób kopię rysunku. Usuń kreskowania (HATCH), obrazy i odnośniki zewnętrzne; zamroź zbędne warstwy (meble, opisy pomieszczeń, jeśli niepotrzebne).</li><li>Polecenie <code>ZAPISZJAKO</code> → typ <b>DXF</b> (np. AutoCAD 2018 DXF). Format binarny nie jest obsługiwany.</li><li>Prześlij plik na iPada (OneDrive / iCloud Drive / AirDrop z Maca) i dodaj go tutaj.</li></ol></details></section>
+    <details><summary>Jak przygotować DXF w ZWCAD 2022</summary><ol class="steps"><li>Zrób kopię rysunku. Usuń kreskowania (HATCH), obrazy i odnośniki zewnętrzne. Zbędne warstwy (meble, legendy, opisy) zamroź albo usuń — TEK-INW pomija warstwy zamrożone i wyłączone, tak jak ZWCAD (od wersji 0.4.2).</li><li>Polecenie <code>_PURGE</code> (Wyczyść) usuwa nieużywane bloki i warstwy — plik będzie mniejszy.</li><li>Polecenie <code>ZAPISZJAKO</code> (<code>_SAVEAS</code>) → typ <b>DXF</b> (np. AutoCAD 2018 DXF). Format binarny nie jest obsługiwany.</li><li>Prześlij plik na iPada (OneDrive / iCloud Drive / AirDrop z Maca) i dodaj go tutaj.</li></ol><p class="hint">Plik o rozmiarze kilkudziesięciu MB wczytuje się na iPadzie długo i może przekroczyć pamięć przeglądarki — im lżejszy podkład, tym pewniej. Jeśli rysunek jest za duży, aplikacja wskaże bloki i warstwy, które zajmują najwięcej.</p></details></section>
   <section class="card"><h2>Plan docelowy <small>biuro — rysunek po poprawkach w ZWCAD; na nim powstaje fotodokumentacja</small></h2>
     <p class="sm">Po naniesieniu zmian w ZWCAD wydrukuj rzut do PDF (jeden arkusz albo kilka arkuszy A3) i dodaj go tutaj. Każdy arkusz skalibruj <b>współrzędnymi</b> dwóch punktów w tym samym układzie co podkład roboczy (np. A/1 = 0;0 i D/13 = 144;72 m). Punkty F i zmiany ze zdjęciami przeniosą się same; obrysy zmian zostają w zestawieniu roboczym dla projektanta.</p>
     <div class="drop" data-act="dodaj-podklad" data-rola="docelowy"><b>Dodaj plan docelowy — PDF (arkusz lub kilka arkuszy) albo DXF</b><br><span class="hint">PDF z wielu stron: zaznacz wszystkie arkusze rzutu. DXF docelowy musi mieć ten sam układ współrzędnych co roboczy (nie przesuwaj rysunku w ZWCAD).</span></div>
@@ -269,7 +269,8 @@ async function dodajPodklad(pliki, rola) {
     const nazwa = f.name || 'podklad', rozsz = nazwa.toLowerCase().split('.').pop();
     try {
       if (rozsz === 'dxf') {
-        toast(`Wczytuję ${nazwa}…`); await czekaj(30);
+        const mb = f.size / 1048576;
+        toast(mb > 30 ? `Wczytuję ${nazwa} (${liczba(mb, 0)} MB) — duży plik, to może potrwać nawet minutę. Jeśli iPad przeładuje aplikację, przygotuj lżejszy DXF (Podkłady → „Jak przygotować DXF”).` : `Wczytuję ${nazwa}…`); await czekaj(30);
         const buf = await f.arrayBuffer(); const test = Dxf.wczytaj(buf); // sprawdzenie, zanim zapiszemy
         const id = await Baza.zapiszPlik(S.id, f, nazwa);
         const a = { id: uid('a'), nazwa: nazwa.replace(/\.dxf$/i, ''), typ: 'dxf', zrodlo: { plikId: id, nazwa, strona: 1 }, kal: null, warstwyWid: null, widok: null, ...rolaPole };
@@ -337,6 +338,8 @@ function vPlan() {
         <label class="tg" title="Linie poziome i pionowe w układzie rysunku · F8"><input type="checkbox" id="opOrto"><span>Orto</span></label>
         <span class="sep"></span>
         <button class="btn sm" data-act="cofnij" title="Cofnij ostatnią zmianę (Ctrl+Z)">Cofnij</button>
+        <div class="wiecej"><button class="btn sm ik" data-act="kolor-menu" id="btnKolor" title="Kolor nowych notatek i znaczników" aria-label="Kolor nowych notatek i znaczników">${probkaKoloru(kolorBiez)}</button>
+          <div class="planmenu paleta" id="kolorMenu"><b class="sm">Kolor nowych notatek i znaczników</b>${paletaHtml(kolorBiez, 'kolor-wybierz')}<p class="hint">„Wg rodzaju” — kolor jak w legendzie (F, wymiar, nowy, brak, uwaga, szkic). Kolor postawionego znacznika zmienisz w jego panelu.</p></div></div>
         <button class="btn sm" data-act="ark-kalibruj-plan" id="btnKal">Kalibruj</button>
         <button class="btn sm" data-act="ark-obszar" id="btnObszar" title="Prostokąt, w którym leży rzut (bez tabelki rysunkowej i legendy) — tylko tam trafiają punkty">Obszar rzutu</button>
         <span class="spacer"></span>
@@ -395,6 +398,7 @@ async function montujPlan() {
   $('#arkSel').onchange = (e) => { arkId = e.target.value; S.ostatniArkusz = arkId; wybrany = null; zapisz(); pokazArkusz(); };
   host.addEventListener('pointerdown', () => zwinPanel(false), true); // dotknięcie rysunku chowa panel (wybór znacznika otworzy go ponownie)
   pelnyEkran(localStorageGet('tek-inw-pelny') === '1');
+  Plan.opcja('kolorPisaka', kolorPalety(kolorBiez) ? kolorPalety(kolorBiez).hex : null);
   for (const [k, kl, id] of [['wygladzaj', 'tek-inw-wygladzaj', null], ['rysikPisze', 'tek-inw-rysik-pisze', '#opRysikPisze']]) { const v = localStorageGet(kl) !== '0'; Plan.opcja(k, v); if (id && $(id)) $(id).checked = v; }
   const orp = $('#opRysikPisze'); if (orp) orp.onchange = (e) => { Plan.opcja('rysikPisze', e.target.checked); localStorageSet('tek-inw-rysik-pisze', e.target.checked ? '1' : '0'); };
   $('#opSnap').onchange = (e) => Plan.opcja('snap', e.target.checked);
@@ -452,7 +456,7 @@ function odswiezWpis() {
   if (st.narz === 'szkic') {
     const zn = notatkaAkt && S.znaczniki.find(x => x.id === notatkaAkt.id && x.arkuszId === arkId);
     h += `<span class="hint"><b>Szkic / notatka:</b> pisz i rysuj rysikiem (palcem, jeśli nie masz rysika). Kolejne kreski trafiają do ${zn ? `notatki <b>${zn.nr}</b>` : 'jednej notatki'}. <b>Przytrzymaj</b> rysik na końcu kreski — wyrówna się w prostą, prostokąt lub okrąg.</span>`
-      + `<label class="tg"><input type="checkbox" id="opWygladz"${st.opcje.wygladzaj ? ' checked' : ''}><span>Wygładzaj kształty zawsze</span></label><button class="btn sm" data-act="notatka-nowa"${zn ? '' : ' disabled'}>Nowa notatka</button>`;
+      + `<span class="pisak">${paletaHtml(kolorBiez, 'kolor-wybierz')}</span><label class="tg"><input type="checkbox" id="opWygladz"${st.opcje.wygladzaj ? ' checked' : ''}><span>Wygładzaj kształty zawsze</span></label><button class="btn sm" data-act="notatka-nowa"${zn ? '' : ' disabled'}>Nowa notatka</button>`;
   }
   if (st.narz === 'obszar') h += `<span class="hint"><b>Obszar rzutu:</b> wskaż dwa przeciwległe narożniki prostokąta, w którym leży rzut (bez tabelki rysunkowej i legendy).</span><button class="btn sm" data-act="kal-anuluj">Anuluj</button>`;
   if (kalibracjaArk) h += `<span class="hint"><b>Kalibracja:</b> wskaż punkt ${st.punkty + 1} z 2 (np. skrzyżowanie osi). Dokładność kalibracji = dokładność wszystkich wymiarów.</span><button class="btn sm" data-act="kal-anuluj">Anuluj</button>`;
@@ -468,14 +472,14 @@ const pad = (n, d) => String(n).padStart(d, '0');
 function utworzFoto(pos, kier) {
   if (docelowy(arkBiez())) return toast('Na planie docelowym nie dodaje się znaczników — stawiasz je w terenie na podkładzie roboczym.', true);
   migawka();
-  const z = { id: uid('m'), nr: 'F-' + pad(S.seqF++, 3), rodzaj: 'F', arkuszId: arkId, geom: { typ: 'punkt', pkt: [pos] }, kier: kier ?? null, element: '', kategoria: '', opis: '', zdjecia: [], utw: Date.now(), zm: Date.now() };
+  const z = { id: uid('m'), nr: 'F-' + pad(S.seqF++, 3), rodzaj: 'F', arkuszId: arkId, geom: { typ: 'punkt', pkt: [pos] }, kier: kier ?? null, element: '', kategoria: '', opis: '', zdjecia: [], utw: Date.now(), zm: Date.now(), ...(kolorBiez ? { kolor: kolorBiez } : {}) };
   S.znaczniki.push(z); wybrany = z.id; zapisz(true); odswiezPlan(); odslon(z.id);
   if (S.ustaw.aparatOdRazu) zrobZdjecie(z.id, true);
 }
 function utworzZmiane({ typZ, geom }) {
   if (docelowy(arkBiez())) return toast('Na planie docelowym nie dodaje się znaczników — stawiasz je w terenie na podkładzie roboczym.', true);
   migawka();
-  const z = { id: uid('m'), nr: 'Z-' + pad(S.seqZ++, 2), rodzaj: 'Z', typZ, arkuszId: arkId, geom, kier: null, element: '', kategoria: '', opis: '', zrodlo: typZ === 'wymiar' ? 'P' : 'O', wymPom: null, zdjecia: [], utw: Date.now(), zm: Date.now() };
+  const z = { id: uid('m'), nr: 'Z-' + pad(S.seqZ++, 2), rodzaj: 'Z', typZ, arkuszId: arkId, geom, kier: null, element: '', kategoria: '', opis: '', zrodlo: typZ === 'wymiar' ? 'P' : 'O', wymPom: null, zdjecia: [], utw: Date.now(), zm: Date.now(), ...(kolorBiez ? { kolor: kolorBiez } : {}) };
   S.znaczniki.push(z); wybrany = z.id; zapisz(true); odswiezPlan(); odslon(z.id);
   if (typZ === 'wymiar') { const p = $('#zPom'); if (p) p.focus(); }
 }
@@ -483,16 +487,32 @@ function utworzZmiane({ typZ, geom }) {
 /* --- szkic / notatka odręczna: kolejne kreski trafiają do tej samej notatki (Z „szkic”), dopóki nie zmienisz narzędzia,
        nie naciśniesz „Nowa notatka” albo nie minie 20 s od ostatniej kreski --- */
 let notatkaAkt = null;
+/* bieżący kolor nowych notatek i znaczników (od 0.4.2): '' = kolor rodzaju; pamiętany na urządzeniu */
+let kolorBiez = (() => { const k = localStorageGet('tek-inw-kolor') || ''; return kolorPalety(k) ? k : ''; })();
+const AUTO_TLO = 'conic-gradient(#0A8FB0 0 60deg,#c2410c 0 120deg,#15803d 0 180deg,#b91c1c 0 240deg,#7c3aed 0 300deg,#8a8580 0)';
+const probkaKoloru = (id) => { const k = kolorPalety(id); return `<span class="kp" style="background:${k ? k.hex : AUTO_TLO}"></span>`; };
+function paletaHtml(sel, act, id) {
+  const b = (k, tlo, nazwa) => `<button class="sw${(sel || '') === k ? ' on' : ''}" data-act="${act}" data-kolor="${k}"${id ? ` data-id="${id}"` : ''} title="${nazwa}" aria-label="${nazwa}" style="background:${tlo}"></button>`;
+  return `<span class="swatche">${b('', AUTO_TLO, 'wg rodzaju')}${PALETA.map(k => b(k.id, k.hex, k.nazwa)).join('')}</span>`;
+}
+function ustawKolorBiez(id) {
+  kolorBiez = kolorPalety(id) ? id : ''; localStorageSet('tek-inw-kolor', kolorBiez);
+  const k = kolorPalety(kolorBiez); Plan.opcja('kolorPisaka', k ? k.hex : null);
+  const bk = $('#btnKolor'); if (bk) bk.innerHTML = probkaKoloru(kolorBiez);
+  for (const sw of $$('[data-act=kolor-wybierz]')) sw.classList.toggle('on', sw.dataset.kolor === kolorBiez);
+  const m = $('#kolorMenu'); if (m) m.classList.remove('on');
+  status(`Kolor nowych notatek i znaczników: ${k ? k.nazwa : 'wg rodzaju'}.`);
+}
 const NAZWY_KSZTALTOW = { linia: 'prosta', lamana: 'łamana', prostokat: 'prostokąt', trojkat: 'trójkąt', wielokat: 'wielokąt', okrag: 'okrąg', elipsa: 'elipsa' };
 function dodajKreske(k) {
   const a = arkBiez(); if (!a) return;
   if (docelowy(a)) return toast('Na planie docelowym nie dodaje się znaczników — notatki rób na podkładzie roboczym.', true);
   migawka();
-  const kreska = { pkt: k.pkt.map(q => [q[0], q[1]]), zamkn: !!k.zamkn, ksztalt: k.ksztalt || null };
+  const kreska = { pkt: k.pkt.map(q => [q[0], q[1]]), zamkn: !!k.zamkn, ksztalt: k.ksztalt || null, ...(kolorBiez ? { kolor: kolorBiez } : {}) }; // każda kreska pamięta kolor pisaka
   let z = notatkaAkt && Date.now() - notatkaAkt.t < 20000 ? S.znaczniki.find(x => x.id === notatkaAkt.id && x.arkuszId === arkId && x.geom.kreski) : null;
   if (z) { z.geom.kreski.push(kreska); z.geom.pkt = z.geom.kreski.flatMap(q => q.pkt); z.zm = Date.now(); }
   else {
-    z = { id: uid('m'), nr: 'Z-' + pad(S.seqZ++, 2), rodzaj: 'Z', typZ: 'szkic', arkuszId: arkId, geom: { typ: 'odr', kreski: [kreska], pkt: kreska.pkt.slice() }, kier: null, element: '', kategoria: '', opis: '', zrodlo: 'O', wymPom: null, zdjecia: [], utw: Date.now(), zm: Date.now() };
+    z = { id: uid('m'), nr: 'Z-' + pad(S.seqZ++, 2), rodzaj: 'Z', typZ: 'szkic', arkuszId: arkId, geom: { typ: 'odr', kreski: [kreska], pkt: kreska.pkt.slice() }, kier: null, element: '', kategoria: '', opis: '', zrodlo: 'O', wymPom: null, zdjecia: [], utw: Date.now(), zm: Date.now(), ...(kolorBiez ? { kolor: kolorBiez } : {}) };
     S.znaczniki.push(z);
   }
   notatkaAkt = { id: z.id, t: Date.now() };
@@ -592,6 +612,7 @@ function odswiezPanel() {
     ${z.rodzaj === 'Z' ? `<label class="f"><span>Rodzaj zmiany</span><select data-zm="typZ">${Object.entries(Eksport.TYPY).map(([k, t]) => `<option value="${k}"${z.typZ === k ? ' selected' : ''}>${t}</option>`).join('')}</select></label>` : ''}
     <label class="f"><span>Element (oznaczenie)</span><input data-zm="element" value="${esc(z.element)}" placeholder="np. SŁ-C/4, brama B-07, dok D-03"></label>
     <label class="f"><span>Kategoria</span><select data-zm="kategoria"><option value="">—</option>${KATEGORIE.map(k => `<option${z.kategoria === k ? ' selected' : ''}>${esc(k)}</option>`).join('')}</select></label>
+    <div class="f kolorZn"><span>Kolor${z.geom.kreski ? ' <span class="muted">(cała notatka)</span>' : ''}</span>${paletaHtml(z.kolor, 'znacznik-kolor', z.id)}</div>
     ${z.typZ === 'wymiar' ? `<div class="wym"><div><span>Z rysunku</span><b>${Number.isFinite(rys) ? naUz(rys) + ' ' + jedn() : (kal || wirt ? '—' : 'brak kalibracji')}</b></div>
       <label><span>Pomiar (dalmierz) [${jedn()}]</span><input id="zPom" data-zm="wymPom" inputmode="decimal" value="${Number.isFinite(z.wymPom) ? naUz(z.wymPom) : ''}" placeholder="${jedn() === 'm' ? 'np. 5,985' : 'np. 5985'}"></label>
       <div><span>Różnica</span><b class="${Number.isFinite(rys) && Number.isFinite(z.wymPom) && Math.abs(z.wymPom - rys) > 20 ? 'err' : ''}">${Number.isFinite(rys) && Number.isFinite(z.wymPom) ? (z.wymPom - rys >= 0 ? '+' : '−') + liczba(Math.abs(z.wymPom - rys), 0) + ' mm' : '—'}</b></div></div>` : ''}
@@ -610,7 +631,7 @@ function odswiezPanel() {
       : `<button class="btn sm" data-act="znacznik-pokaz" data-id="${z.id}">Pokaż na planie</button><button class="btn sm danger" data-act="znacznik-usun" data-id="${z.id}">Usuń ${z.nr}</button>`}</div>`;
   wczytajMiniatury();
 }
-const kolorZ = (z) => z.rodzaj === 'F' ? '#5fd3ee' : ({ wymiar: '#f6a56b', nowy: '#6fcf8e', brak: '#f09595', uwaga: '#b9a2f5', szkic: '#b9c3d6' }[z.typZ] || '#b9c3d6'); // na granatowym tle; na rysunku i w PDF — mocne odcienie
+const kolorZ = (z) => kolorPalety(z.kolor) ? kolorPalety(z.kolor).ekr : z.rodzaj === 'F' ? '#5fd3ee' : ({ wymiar: '#f6a56b', nowy: '#6fcf8e', brak: '#f09595', uwaga: '#b9a2f5', szkic: '#b9c3d6' }[z.typZ] || '#b9c3d6'); // na granatowym tle; na rysunku i w PDF — mocne odcienie
 const opisRodzaju = (z) => z.rodzaj === 'F' ? 'punkt fotograficzny' : (Eksport.TYPY[z.typZ] || 'zmiana').toLowerCase();
 async function wczytajMiniatury() {
   for (const img of $$('img[data-mini]')) {
@@ -756,7 +777,7 @@ function vInfo() {
 
 /* ---------- ZDARZENIA ---------- */
 document.addEventListener('click', async (e) => {
-  const m = $('#planMenu'); if (m && m.classList.contains('on') && !e.target.closest('.wiecej')) m.classList.remove('on');
+  for (const m of $$('.planmenu.on')) if (!m.parentElement.contains(e.target)) m.classList.remove('on'); // menu „Więcej” i paleta kolorów
   const t = e.target.closest('[data-tab]'); if (t && S) { tab = t.dataset.tab; render(); window.scrollTo(0, 0); return; }
   const b = e.target.closest('[data-act]'); if (!b) return;
   const act = b.dataset.act, id = b.dataset.id;
@@ -768,7 +789,7 @@ document.addEventListener('click', async (e) => {
     else if (act === 'proj-otworz') { e.stopPropagation(); const p = await Baza.projekt(id); if (p) otworzProjekt(p); }
     else if (act === 'proj-usun') { e.stopPropagation(); const p = (await Baza.projekt(id)); if (!p) return; const nzd = p.znaczniki.reduce((s, z) => s + (z.zdjecia || []).length, 0);
       if (await potwierdz(`Usunąć projekt „${esc(p.meta.nazwa || 'bez nazwy')}” z tego urządzenia? Zostaną usunięte podkłady i ${odm(nzd, 'zdjęcie', 'zdjęcia', 'zdjęć')}. Tego nie da się cofnąć — jeśli nie masz kopii ZIP, najpierw zrób eksport.`, 'Usuń projekt', 'Anuluj', true)) { await Baza.usunProjekt(id); if (S && S.id === id) { S = null; } toast('Usunięto projekt.'); render(); } }
-    else if (act === 'dodaj-podklad') { const f = await wybierzPliki({ accept: '.dxf,.pdf,application/pdf,application/dxf,image/vnd.dxf', multiple: true }); if (f.length) await dodajPodklad(f, b.dataset.rola); }
+    else if (act === 'dodaj-podklad') { const f = await wybierzPliki({ accept: iPad() ? '' : '.dxf,.pdf,application/pdf,application/dxf,image/vnd.dxf', multiple: true }); /* iPad: bez filtra — iOS potrafi wyszarzyć pliki o rozszerzeniu, którego nie zna (np. .dxf); typ sprawdzamy po wybraniu */ if (f.length) await dodajPodklad(f, b.dataset.rola); }
     else if (act === 'demo-docelowy') { const bl = await (await fetch('przyklad/hala_docelowy_A3x2.pdf')).blob(); await dodajPodklad([new File([bl], 'hala_docelowy_A3x2.pdf', { type: 'application/pdf' })], 'docelowy'); toast('Dodano przykładowy plan docelowy. Kalibracja: ark. 1 — A/1 = 0;0 i D/7 = 72;72 m; ark. 2 — A/7 = 72;0 i D/13 = 144;72 m. Potem „Obszar rzutu” na każdym arkuszu.'); }
     else if (act === 'ark-powiel') await powielArkusz(id, false);
     else if (act === 'ark-powiel-plan') { const m = $('#planMenu'); if (m) m.classList.remove('on'); await powielArkusz(arkId, true); }
@@ -799,6 +820,14 @@ document.addEventListener('click', async (e) => {
     else if (act === 'plan-lista') { const p = $('#panel'); if (p) { if (p.classList.contains('on') || p.classList.contains('lista')) zwinPanel(true); else { wybrany = null; Plan.zaznacz(null); odswiezPanel(); p.classList.add('lista'); } } }
     else if (act === 'plan-pelny') pelnyEkran(!document.body.classList.contains('pelny'));
     else if (act === 'plan-menu') { const m = $('#planMenu'); if (m) m.classList.toggle('on'); }
+    else if (act === 'kolor-menu') { const m = $('#kolorMenu'); if (m) m.classList.toggle('on'); }
+    else if (act === 'kolor-wybierz') ustawKolorBiez(b.dataset.kolor);
+    else if (act === 'znacznik-kolor') {
+      const z = S.znaczniki.find(x => x.id === b.dataset.id); if (!z) return; migawka();
+      if (kolorPalety(b.dataset.kolor)) z.kolor = b.dataset.kolor; else delete z.kolor;
+      if (z.geom.kreski) for (const k of z.geom.kreski) delete k.kolor; // kolor dla całej notatki
+      z.zm = Date.now(); zapisz(true); odswiezPlan(); odswiezPanel();
+    }
     else if (act === 'znacznik-pokaz' || act === 'lista-pokaz') {
       const z = S.znaczniki.find(x => x.id === id); if (!z) return; wybrany = z.id;
       if (act === 'znacznik-pokaz' && !b.dataset.rob && tab === 'plan' && docelowy(arkBiez())) { const m = przydzial().get(z.id); if (m && m.a.id === arkId) { Plan.pokaz(m.p[0], m.p[1]); Plan.zaznacz(z.id); odswiezPanel(); return; } }

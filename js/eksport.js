@@ -157,8 +157,8 @@ const Eksport = (() => {
       tekst(page, tytul, 28, h - 54, 19, fB, KOL.navy);
       if (podtytul) tekst(page, podtytul, 28, h - 70, 9.5, fR, KOL.szary);
     }
-    function glif(page, typ, x, y, s) { // symbol z legendy; (x, y) — lewy koniec, środek wysokości; szerokość ok. 12·s
-      const k = hexRgb(KOL[typ] || '#444');
+    function glif(page, typ, x, y, s, kolorStaly) { // symbol z legendy; (x, y) — lewy koniec, środek wysokości; szerokość ok. 12·s
+      const k = hexRgb(kolorStaly || KOL[typ] || '#444');
       if (typ === 'F') page.drawCircle({ x: x + 5 * s, y, size: 4.2 * s, color: k, borderColor: hexRgb('#ffffff'), borderWidth: 0.8 * s });
       else if (typ === 'wymiar') { page.drawLine({ start: { x, y }, end: { x: x + 12 * s, y }, thickness: 1.4 * s, color: k }); [x, x + 12 * s].forEach(q => page.drawLine({ start: { x: q, y: y - 3 * s }, end: { x: q, y: y + 3 * s }, thickness: 1.1 * s, color: k })); }
       else if (typ === 'nowy') page.drawRectangle({ x, y: y - 4 * s, width: 12 * s, height: 8 * s, borderColor: k, borderWidth: 1.4 * s });
@@ -193,7 +193,9 @@ const Eksport = (() => {
     const pierwszeZdj = new Map(); zdjecia.forEach((x, k) => { if (!pierwszeZdj.has(x.z.id)) pierwszeZdj.set(x.z.id, k); });
     const promienPlanu = (P) => clamp(Math.min(P.w, P.h) / 120, 7, 18); // A3: kółko ok. 5 mm — czytelne po wydruku
     const naPlanie = (a, q) => { const P = PODK.get(a.id), L = P.pl; return [L.p * q[0] + L.ox, -L.p * q[1] + L.oy]; }; // arkusz → strona planu (y w górę)
-    const kolor = (z) => z.rodzaj === 'F' ? KOL.F : (KOL[z.typZ] || '#444');
+    const kolor = (z) => { const w = kolorPalety(z.kolor); return w ? w.hex : z.rodzaj === 'F' ? KOL.F : (KOL[z.typZ] || '#444'); }; // kolor wybrany na planie albo kolor rodzaju
+    const kolorKreski = (k, z) => { const w = kolorPalety(k.kolor); return w ? w.hex : kolor(z); };
+    const stozek = (z) => kolorPalety(z.kolor) ? kolor(z) : '#22C3E6'; // wypełnienie stożka widzenia zdjęcia
     const gdzie = new Map(); // id znacznika → { a: arkusz planu w tym dokumencie, z: znacznik tak, jak leży na tym arkuszu }
     for (const pl of plany) for (const zz of pl.znaczniki) if (!gdzie.has(zz.id)) gdzie.set(zz.id, { a: pl.a, z: zz });
     const ZmF = Zm.filter(z => (z.zdjecia || []).length);
@@ -248,6 +250,7 @@ const Eksport = (() => {
             for (const z of pl.znaczniki) {
               const Q = z.geom.pkt.map(q => { const [X, Y] = naPlanie(pl.a, q); return [tx + t * X, ty + t * Y]; }), k = hexRgb(kolor(z));
               if (z.rodzaj === 'F') p.drawCircle({ x: Q[0][0], y: Q[0][1], size: 3.3, color: k, borderColor: hexRgb('#ffffff'), borderWidth: 0.8 });
+              else if (z.geom.kreski && !z._punktowy) { for (const kr of z.geom.kreski) { const QK = kr.pkt.map(q => { const [X, Y] = naPlanie(pl.a, q); return [tx + t * X, ty + t * Y]; }); if (QK.length > 1) p.drawSvgPath('M' + QK.map(q => `${q[0]} ${-q[1]}`).join(' L') + (kr.zamkn ? ' Z' : ''), { x: 0, y: 0, borderColor: hexRgb(kolorKreski(kr, z)), borderWidth: 0.9 }); } } // notatka: kreski osobno
               else if (Q.length > 1 && !z._punktowy) p.drawSvgPath('M' + Q.map(q => `${q[0]} ${-q[1]}`).join(' L') + (z.geom.zamkn ? ' Z' : ''), { x: 0, y: 0, borderColor: k, borderWidth: 1.1 });
               else { const [X, Y] = Q[0]; p.drawSvgPath(`M${X} ${-Y - 3.6} L${X + 3.6} ${-Y} L${X} ${-Y + 3.6} L${X - 3.6} ${-Y} Z`, { x: 0, y: 0, color: k, borderColor: hexRgb('#ffffff'), borderWidth: 0.6 }); }
             }
@@ -318,7 +321,7 @@ const Eksport = (() => {
         const kom = [['Strona', sNr], ['Nr opracowania', m.nr || '—']];
         for (const [et, wart] of kom) { const cw = Math.max(szer(wart, fM, 9.5 * sk), szer(et, fB, 6.5 * sk)); rx -= cw; tekst(p, et, rx, h + 30 * sk, 6.5 * sk, fB, KOL.jasny); tekst(p, wart, rx, h + 14 * sk, 9.5 * sk, fM, KOL.tekst); rx -= 14 * sk; p.drawLine({ start: { x: rx + 2 * sk, y: h + 10 * sk }, end: { x: rx + 2 * sk, y: h + 40 * sk }, thickness: 0.5 * sk, color: hexRgb(KOL.linia) }); rx -= 12 * sk; }
         const typy = Object.keys(NAZWY_LEG).filter(t => pl.znaczniki.some(z => typZnacznika(z) === t));
-        for (const t of typy.reverse()) { const tw = szer(NAZWY_LEG[t], fR, 8.5 * sk); rx -= tw; tekst(p, NAZWY_LEG[t], rx, h + 19 * sk, 8.5 * sk, fR, KOL.tekst); rx -= 17 * sk; glif(p, t, rx, h + 22 * sk, sk); rx -= 14 * sk; }
+        for (const t of typy.reverse()) { const tw = szer(NAZWY_LEG[t], fR, 8.5 * sk); rx -= tw; tekst(p, NAZWY_LEG[t], rx, h + 19 * sk, 8.5 * sk, fR, KOL.tekst); rx -= 17 * sk; glif(p, t, rx, h + 22 * sk, sk, pl.znaczniki.some(z => typZnacznika(z) === t && kolorPalety(z.kolor)) ? KOL.szary : null); rx -= 14 * sk; } // rodzaj z kolorami wybranymi ręcznie: w legendzie sam kształt
       }
       const r0 = promienPlanu(P);
       for (const z of pl.znaczniki) {
@@ -326,14 +329,14 @@ const Eksport = (() => {
         let rect;
         if (z.rodzaj === 'F') {
           const [x, y] = pts[0];
-          if (z.kier !== null && z.kier !== undefined) p.drawSvgPath(klin(x, h + NAGL - y, r0 * 4.2, z.kier), { x: 0, y: h + NAGL, color: hexRgb('#22C3E6'), opacity: 0.25, borderColor: kol, borderWidth: 0.6 * sk / 1.4 });
+          if (z.kier !== null && z.kier !== undefined) p.drawSvgPath(klin(x, h + NAGL - y, r0 * 4.2, z.kier), { x: 0, y: h + NAGL, color: hexRgb(stozek(z)), opacity: 0.25, borderColor: kol, borderWidth: 0.6 * sk / 1.4 });
           p.drawCircle({ x, y, size: r0, color: kol, borderColor: hexRgb('#ffffff'), borderWidth: r0 * 0.16 });
           const t = String(parseInt(z.nr.slice(2), 10)), fs = r0 * (t.length > 2 ? 0.8 : 1.0);
           tekst(p, t, x - szer(t, fM, fs) / 2, y - fs * 0.36, fs, fM, '#ffffff');
           rect = [x - r0 * 1.3, y - r0 * 1.3, x + r0 * 1.3, y + r0 * 1.3];
         } else {
           const lw = r0 * 0.22;
-          if (z.geom.kreski && !z._punktowy) { for (const k of z.geom.kreski) { const Q = k.pkt.map(q => naPlanie(a, q)); if (Q.length < 2) continue; p.drawSvgPath('M' + Q.map(q => `${q[0]} ${h + NAGL - q[1]}`).join(' L') + (k.zamkn ? ' Z' : ''), { x: 0, y: h + NAGL, borderColor: kol, borderWidth: lw * 0.8 }); } } // szkic / notatka z wielu kresek
+          if (z.geom.kreski && !z._punktowy) { for (const k of z.geom.kreski) { const Q = k.pkt.map(q => naPlanie(a, q)); if (Q.length < 2) continue; p.drawSvgPath('M' + Q.map(q => `${q[0]} ${h + NAGL - q[1]}`).join(' L') + (k.zamkn ? ' Z' : ''), { x: 0, y: h + NAGL, borderColor: hexRgb(kolorKreski(k, z)), borderWidth: lw * 0.8 }); } } // szkic / notatka z wielu kresek (każda w swoim kolorze)
           else if (pts.length > 1) { const d = 'M' + pts.map(q => `${q[0]} ${h + NAGL - q[1]}`).join(' L') + (z.geom.zamkn ? ' Z' : ''); p.drawSvgPath(d, { x: 0, y: h + NAGL, borderColor: kol, borderWidth: lw, borderDashArray: z.typZ === 'brak' ? [lw * 3, lw * 2] : undefined }); }
           if (z.typZ === 'brak' && pts.length > 2) { const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]); p.drawLine({ start: { x: Math.min(...xs), y: Math.min(...ys) }, end: { x: Math.max(...xs), y: Math.max(...ys) }, thickness: lw * 0.6, color: kol }); p.drawLine({ start: { x: Math.min(...xs), y: Math.max(...ys) }, end: { x: Math.max(...xs), y: Math.min(...ys) }, thickness: lw * 0.6, color: kol }); }
           if (z.typZ === 'uwaga' || z._punktowy) { const [x, y] = pts[0]; p.drawSvgPath(`M${x} ${h + NAGL - y - r0} L${x + r0} ${h + NAGL - y} L${x} ${h + NAGL - y + r0} L${x - r0} ${h + NAGL - y} Z`, { x: 0, y: h + NAGL, color: kol, borderColor: hexRgb('#ffffff'), borderWidth: r0 * 0.12 }); }
@@ -389,12 +392,12 @@ const Eksport = (() => {
         const pts = zg.geom.pkt.map(S2), kk = hexRgb(kz);
         if (z.rodzaj === 'F') {
           const [X, Y] = pts[0];
-          if (zg.kier !== null && zg.kier !== undefined) p.drawSvgPath(klin(X, h - Y, 46, zg.kier), { x: 0, y: h, color: hexRgb('#22C3E6'), opacity: 0.3, borderColor: kk, borderWidth: 0.8 });
+          if (zg.kier !== null && zg.kier !== undefined) p.drawSvgPath(klin(X, h - Y, 46, zg.kier), { x: 0, y: h, color: hexRgb(stozek(z)), opacity: 0.3, borderColor: kk, borderWidth: 0.8 });
           p.drawCircle({ x: X, y: Y, size: 6, color: kk, borderColor: hexRgb('#ffffff'), borderWidth: 1.4 });
         } else if (pts.length > 1) {
-          const linie = zg.geom.kreski ? zg.geom.kreski.map(k => ({ Q: k.pkt.map(S2), zamkn: k.zamkn })) : [{ Q: pts, zamkn: zg.geom.zamkn }];
+          const linie = zg.geom.kreski ? zg.geom.kreski.map(k => ({ Q: k.pkt.map(S2), zamkn: k.zamkn, kol: hexRgb(kolorKreski(k, z)) })) : [{ Q: pts, zamkn: zg.geom.zamkn, kol: kk }];
           p.pushOperators(pushGraphicsState(), rectangle(mx, my, mw, mh), clip(), endPath());
-          for (const { Q, zamkn } of linie) { if (Q.length < 2) continue; const d = 'M' + Q.map(q => `${clamp(q[0], mx - 50, mx + mw + 50)} ${h - clamp(q[1], my - 50, my + mh + 50)}`).join(' L') + (zamkn ? ' Z' : ''); p.drawSvgPath(d, { x: 0, y: h, borderColor: kk, borderWidth: 2 }); }
+          for (const { Q, zamkn, kol: kl } of linie) { if (Q.length < 2) continue; const d = 'M' + Q.map(q => `${clamp(q[0], mx - 50, mx + mw + 50)} ${h - clamp(q[1], my - 50, my + mh + 50)}`).join(' L') + (zamkn ? ' Z' : ''); p.drawSvgPath(d, { x: 0, y: h, borderColor: kl, borderWidth: 2 }); }
           p.pushOperators(popGraphicsState());
         } else { const [X, Y] = pts[0]; p.drawSvgPath(`M${X} ${h - Y - 7} L${X + 7} ${h - Y} L${X} ${h - Y + 7} L${X - 7} ${h - Y} Z`, { x: 0, y: h, color: kk, borderColor: hexRgb('#ffffff'), borderWidth: 1 }); }
         p.drawRectangle({ x: mx, y: my, width: mw, height: mh, borderColor: hexRgb(KOL.linia2), borderWidth: 0.7 });
@@ -534,10 +537,11 @@ const Eksport = (() => {
     const zak = r.typ === 'dxf' ? r.dxf.zasieg : { minx: 0, miny: 0, maxx: r.wym.w, maxy: r.wym.h };
     const span = Math.max(zak.maxx - zak.minx, zak.maxy - zak.miny) * Geom.skala(T);
     const hT = Math.max(1e-6, Math.pow(10, Math.round(Math.log10(span / 350) * 2) / 2));
-    const linia = (war, p, q) => { kod(0, 'LINE'); kod(8, war); kod(10, n(p[0])); kod(20, n(p[1])); kod(30, 0); kod(11, n(q[0])); kod(21, n(q[1])); kod(31, 0); };
-    const pl = (war, pts, zamkn) => { kod(0, 'POLYLINE'); kod(8, war); kod(66, 1); kod(10, 0); kod(20, 0); kod(30, 0); kod(70, zamkn ? 1 : 0); for (const p of pts) { kod(0, 'VERTEX'); kod(8, war); kod(10, n(p[0])); kod(20, n(p[1])); kod(30, 0); } kod(0, 'SEQEND'); kod(8, war); };
-    const okr = (war, p, rr) => { kod(0, 'CIRCLE'); kod(8, war); kod(10, n(p[0])); kod(20, n(p[1])); kod(30, 0); kod(40, n(rr)); };
-    const txt = (war, p, t, h, rot = 0) => { kod(0, 'TEXT'); kod(8, war); kod(10, n(p[0])); kod(20, n(p[1])); kod(30, 0); kod(40, n(h)); kod(1, dxfTekst(t)); kod(50, n(rot)); };
+    let kolE = 0; const kolW = () => { if (kolE) kod(62, kolE); }; // kolor wybrany dla znacznika/kreski (numer koloru AutoCAD); 0 = kolor warstwy
+    const linia = (war, p, q) => { kod(0, 'LINE'); kod(8, war); kolW(); kod(10, n(p[0])); kod(20, n(p[1])); kod(30, 0); kod(11, n(q[0])); kod(21, n(q[1])); kod(31, 0); };
+    const pl = (war, pts, zamkn) => { kod(0, 'POLYLINE'); kod(8, war); kolW(); kod(66, 1); kod(10, 0); kod(20, 0); kod(30, 0); kod(70, zamkn ? 1 : 0); for (const p of pts) { kod(0, 'VERTEX'); kod(8, war); kod(10, n(p[0])); kod(20, n(p[1])); kod(30, 0); } kod(0, 'SEQEND'); kod(8, war); };
+    const okr = (war, p, rr) => { kod(0, 'CIRCLE'); kod(8, war); kolW(); kod(10, n(p[0])); kod(20, n(p[1])); kod(30, 0); kod(40, n(rr)); };
+    const txt = (war, p, t, h, rot = 0) => { kod(0, 'TEXT'); kod(8, war); kolW(); kod(10, n(p[0])); kod(20, n(p[1])); kod(30, 0); kod(40, n(h)); kod(1, dxfTekst(t)); kod(50, n(rot)); };
     // nagłówek i tablice
     kod(0, 'SECTION'); kod(2, 'HEADER'); kod(9, '$ACADVER'); kod(1, 'AC1009'); kod(9, '$DWGCODEPAGE'); kod(3, 'ANSI_1250'); kod(0, 'ENDSEC');
     kod(0, 'SECTION'); kod(2, 'TABLES');
@@ -549,7 +553,7 @@ const Eksport = (() => {
     if (!r.T) txt('INW-UWAGI', [0, hT * 4], 'UWAGA: podklad PDF nieskalibrowany - wspolrzedne w mm na papierze, nie w ukladzie rysunku', hT * 1.5);
     for (const z of S.znaczniki.filter(q => (ids || [a.id]).includes(q.arkuszId))) {
       const P = z.geom.pkt.map(W); if (!P.length) continue;
-      const nr = z.nr;
+      const nr = z.nr; kolE = (kolorPalety(z.kolor) || {}).aci || 0;
       if (z.rodzaj === 'F') {
         okr('INW-FOTO', P[0], hT * 0.9); txt('INW-NUMERY', [P[0][0] + hT * 1.2, P[0][1] + hT * 0.4], nr, hT);
         if (z.kier !== null && z.kier !== undefined) {
@@ -568,7 +572,7 @@ const Eksport = (() => {
         const mid = [(P[0][0] + P[1][0]) / 2 + nx * 1.4, (P[0][1] + P[1][1]) / 2 + ny * 1.4];
         txt(war, mid, `${nr} ${opisWymiaruMm(z, r)}`, hT * 0.9, ((rot % 360) + 360) % 360);
       } else if (z.geom.kreski) { // szkic / notatka: każda kreska osobną polilinią
-        for (const k of z.geom.kreski) if (k.pkt.length > 1) pl(war, k.pkt.map(W), !!k.zamkn);
+        const kz = kolE; for (const k of z.geom.kreski) if (k.pkt.length > 1) { kolE = (kolorPalety(k.kolor) || {}).aci || kz; pl(war, k.pkt.map(W), !!k.zamkn); } kolE = kz;
         txt('INW-NUMERY', [P[0][0] + hT * 0.4, P[0][1] + hT * 0.6], nr + (z.element ? ' ' + z.element : ''), hT);
       } else if (P.length > 1) {
         pl(war, P, !!z.geom.zamkn);
@@ -605,9 +609,9 @@ const Eksport = (() => {
       zasady: 'Współrzędne w układzie rysunku źródłowego (DXF: jednostki pliku; PDF: mm po kalibracji). Wartości „pomiar” pochodzą z dalmierza i mają pierwszeństwo przed rysunkiem. Nie zgaduj wymiarów, których tu nie ma.',
       arkusze: S.arkusze.map(a => { const r = R.get(a.id); return { id: a.id, nazwa: a.nazwa, podklad: a.zrodlo.nazwa, typ: a.typ, kalibracja: !!(r && r.T), jednostkaWspolrzednych: r ? (r.typ === 'dxf' ? `jednostka DXF (${r.dxf.jednostki}; 1 = ${r.k} mm)` : r.T ? 'mm' : 'mm na papierze (brak kalibracji)') : '' }; }),
       zmiany: Zm.map(z => { const r = R.get(z.arkuszId), T = r && r.T; return {
-        nr: z.nr, rodzaj: z.typZ, opisRodzaju: TYPY[z.typZ], arkusz: z.arkuszId, element: z.element || null, kategoria: z.kategoria || null, zrodlo: z.zrodlo || null, opis: z.opis || null,
+        nr: z.nr, rodzaj: z.typZ, opisRodzaju: TYPY[z.typZ], arkusz: z.arkuszId, element: z.element || null, kategoria: z.kategoria || null, zrodlo: z.zrodlo || null, opis: z.opis || null, kolor: kolorPalety(z.kolor) ? kolorPalety(z.kolor).nazwa : null,
         geometria: { typ: z.geom.typ, zamknieta: !!z.geom.zamkn, punkty: T ? z.geom.pkt.map(p => Geom.zastosuj(T, ...p).map(v => Math.round(v * 1000) / 1000)) : null, punktyArkusza: z.geom.pkt,
-          kreski: z.geom.kreski ? z.geom.kreski.map(k => ({ ksztalt: k.ksztalt || 'odreczna', zamknieta: !!k.zamkn, punkty: T ? k.pkt.map(p => Geom.zastosuj(T, ...p).map(v => Math.round(v * 1000) / 1000)) : null })) : undefined },
+          kreski: z.geom.kreski ? z.geom.kreski.map(k => ({ ksztalt: k.ksztalt || 'odreczna', zamknieta: !!k.zamkn, kolor: kolorPalety(k.kolor || z.kolor) ? kolorPalety(k.kolor || z.kolor).nazwa : null, punkty: T ? k.pkt.map(p => Geom.zastosuj(T, ...p).map(v => Math.round(v * 1000) / 1000)) : null })) : undefined },
         wymiar: z.typZ === 'wymiar' ? { rysunek_mm: Number.isFinite(wymRysMm(z, R)) ? Math.round(wymRysMm(z, R)) : null, pomiar_mm: Number.isFinite(z.wymPom) ? Math.round(z.wymPom) : null } : undefined,
         zdjecia: (z.zdjecia || []).map((_, i) => 'zdjecia/' + plikZdj(z, i)) }; })
     };

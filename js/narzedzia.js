@@ -49,9 +49,9 @@ async function potwierdz(tekst, tak = 'Tak', nie = 'Anuluj', groznie = false) {
 }
 
 /* Wybór pliku z dysku / aparatu. capture = 'environment' otwiera od razu aparat na iPadzie. */
-function wybierzPliki({ accept = '*/*', multiple = false, capture = null } = {}) {
+function wybierzPliki({ accept = '', multiple = false, capture = null } = {}) {
   return new Promise((ok) => {
-    const i = document.createElement('input'); i.type = 'file'; i.accept = accept; i.multiple = multiple;
+    const i = document.createElement('input'); i.type = 'file'; if (accept) i.accept = accept; i.multiple = multiple; // bez „accept” — wszystkie pliki do wyboru
     if (capture) i.setAttribute('capture', capture);
     i.style.display = 'none'; document.body.appendChild(i);
     i.onchange = () => { const f = Array.from(i.files || []); i.remove(); ok(f); };
@@ -89,3 +89,19 @@ function pobierz(blob, nazwa) {
 const bezpiecznaNazwa = (s, dl = 40) => String(s || '').normalize('NFC').replace(/[^\p{L}\p{N}_-]+/gu, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').slice(0, dl) || 'projekt';
 const urzadzenieDotykowe = () => (navigator.maxTouchPoints || 0) > 0;
 const iPad = () => /iPad|Macintosh/.test(navigator.userAgent) && urzadzenieDotykowe();
+
+/* Kolory notatek i znaczników do wyboru (od 0.4.2). W projekcie zapisujemy identyfikator (z.kolor, kreska.kolor);
+   brak koloru = kolor rodzaju (F, wymiar, nowy, brak, uwaga, szkic). hex — na rysunku i w PDF (białe tło),
+   ekr — jaśniejszy odcień do ciemnego interfejsu, aci — numer koloru AutoCAD/ZWCAD w pliku DXF zmian. */
+const PALETA = [
+  { id: 'czerwony', nazwa: 'czerwony', hex: '#dc2626', ekr: '#f28b8b', aci: 1 },
+  { id: 'pomaranczowy', nazwa: 'pomarańczowy', hex: '#ea580c', ekr: '#f6a56b', aci: 30 },
+  { id: 'zolty', nazwa: 'żółty', hex: '#ca8a04', ekr: '#f2cf5b', aci: 2 },
+  { id: 'zielony', nazwa: 'zielony', hex: '#16a34a', ekr: '#6fcf8e', aci: 3 },
+  { id: 'turkus', nazwa: 'turkusowy', hex: '#0891b2', ekr: '#5fd3ee', aci: 4 },
+  { id: 'niebieski', nazwa: 'niebieski', hex: '#2563eb', ekr: '#8fb0f7', aci: 5 },
+  { id: 'fiolet', nazwa: 'fioletowy', hex: '#9333ea', ekr: '#c9a2f5', aci: 6 },
+  { id: 'czarny', nazwa: 'czarny', hex: '#1d1d1b', ekr: '#e6e9ef', aci: 7 },
+  { id: 'szary', nazwa: 'szary', hex: '#6b7280', ekr: '#b9c3d6', aci: 8 }
+];
+const kolorPalety = (id) => (id && PALETA.find(k => k.id === id)) || null;

@@ -2,7 +2,9 @@
    Kroki: (1) rozpoznanie kodowania polskich znaków, (2) odczyt pliku biblioteką dxf-parser (MIT),
    (3) „spłaszczenie” rysunku: bloki (INSERT) rozwijamy do zwykłych linii w układzie rysunku, łuki zamieniamy na odcinki,
    (4) zebranie punktów przyciągania: końce i środki odcinków, wierzchołki, środki okręgów, skrzyżowania długich linii.
-   Kreskowania (HATCH) i atrybuty bloków pomijamy — na podkładzie do inwentaryzacji tylko zaciemniałyby rysunek. */
+   Kreskowania (HATCH) i atrybuty bloków pomijamy — na podkładzie do inwentaryzacji tylko zaciemniałyby rysunek.
+   Od 0.4.2 pomijamy też to, czego w ZWCAD nie widać: obiekty na warstwach zamrożonych i wyłączonych oraz obiekty ukryte
+   (wcześniej były liczone do limitu — np. zamrożona legenda z dołączonego odnośnika potrafiła zająć połowę limitu). */
 'use strict';
 
 const Dxf = (() => {
@@ -85,7 +87,7 @@ const Dxf = (() => {
   }
 
   /* Główna funkcja: bajty pliku → podkład gotowy do wyświetlenia. */
-  function wczytaj(buf) {
+  function wczytaj(buf, opcje = {}) {
     const { tekst, wersja, kodowanie } = dekoduj(buf);
     const d = new DxfParser().parseSync(tekst);
     if (!d || !d.entities) throw new Error('Nie udało się odczytać rysunku DXF.');
@@ -95,22 +97,28 @@ const Dxf = (() => {
     const warstwa = (n) => { let w = warstwy.get(n); if (!w) { const def = warstwyDef[n] || {}; w = { nazwa: n, kolor: def.color !== undefined ? hex(def.color) : '#000000', wid: def.visible !== false && !def.frozen }; warstwy.set(n, w); } return w; };
     const grupy = new Map(); // „warstwa|kolor” → { warstwa, kolor, linie: [[x,y,...], ...] }
     const teksty = [], snap = [], proste = [];
-    let licznik = 0; const LIMIT = 1500000;
+    let licznik = 0, przekroczono = false; const LIMIT = 1500000;
+    const nieZbieraj = () => { przekroczono = true; grupy.clear(); for (const t of [snap, proste, teksty]) { t.length = 0; t.push = () => 0; } }; // po przekroczeniu tylko liczymy — żeby wskazać, co zajmuje najwięcej
 
     function dodaj(war, kol, punkty, zamknij) {
       if (punkty.length < 2) return;
+      licznik += punkty.length;
+      if (licznik > LIMIT && !przekroczono) nieZbieraj();
+      if (przekroczono) return;
       const k = war + '|' + kol; let g = grupy.get(k); if (!g) grupy.set(k, g = { warstwa: war, kolor: kol, linie: [] });
       const a = new Float64Array((punkty.length + (zamknij ? 1 : 0)) * 2);
       punkty.forEach((p, i) => { a[i * 2] = p[0]; a[i * 2 + 1] = p[1]; });
       if (zamknij) { a[punkty.length * 2] = punkty[0][0]; a[punkty.length * 2 + 1] = punkty[0][1]; }
-      g.linie.push(a); licznik += punkty.length;
-      if (licznik > LIMIT) throw new Error('Rysunek jest zbyt duży dla tej wersji (ponad 1,5 mln wierzchołków). Usuń z kopii DXF kreskowania i zbędne warstwy.');
+      g.linie.push(a);
     }
     const odcinkiSnap = (pts, zamk) => { const n = pts.length; for (let i = 0; i < n - (zamk ? 0 : 1); i++) { const a = pts[i], b = pts[(i + 1) % n]; snap.push(a, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]); proste.push([a, b]); } if (!zamk && n) snap.push(pts[n - 1]); };
 
     function encja(e, M, warRodzica, kolRodzica, glebia) {
-      if (e.inPaperSpace) return;
+      if (e.inPaperSpace || e.visible === false) return;
       let war = e.layer || '0'; if (war === '0' && warRodzica) war = warRodzica;
+      const def = warstwyDef[war];
+      if (def && def.frozen) return; // warstwa zamrożona: w ZWCAD niewidoczna — razem z całym blokiem wstawionym na tej warstwie
+      if (def && def.visible === false && e.type !== 'INSERT' && e.type !== 'DIMENSION') return; // wyłączona: blok na niej pokazuje tylko elementy z innych, włączonych warstw
       const w = warstwa(war);
       let kol = e.color !== undefined && e.colorIndex !== 256 ? hex(e.color) : w.kolor;
       if (e.colorIndex === 0 && kolRodzica) kol = kolRodzica; // BYBLOCK
@@ -177,18 +185,31 @@ const Dxf = (() => {
         default: break;
       }
     }
-    for (const e of d.entities) encja(e, ID, null, null, 0);
-    if (!grupy.size && !teksty.length) throw new Error('W pliku DXF nie znaleziono elementów rysunku w obszarze modelu.');
+    const udzial = new Map(); // co zajmuje najwięcej punktów: „blok …” albo „warstwa …”
+    for (const e of d.entities) {
+      const l0 = licznik; encja(e, ID, null, null, 0); const n = licznik - l0;
+      if (n) { const k = e.type === 'INSERT' ? `blok „${e.name}” (warstwa „${e.layer || '0'}”)` : `warstwa „${e.layer || '0'}”`; udzial.set(k, (udzial.get(k) || 0) + n); }
+    }
+    if (przekroczono) {
+      const mln = (v) => (v / 1e6).toFixed(1).replace('.', ',');
+      const top = [...udzial].sort((a, b) => b[1] - a[1]).filter(([, n], i) => i === 0 || n >= licznik * 0.02).slice(0, 3).map(([k, n]) => `${k} — ${Math.round(100 * n / licznik)}%`);
+      const err = new Error(`Rysunek jest zbyt duży: ${mln(licznik)} mln punktów linii (limit ${mln(LIMIT)} mln). Najwięcej zajmują: ${top.join('; ')}. W kopii rysunku w ZWCAD usuń te elementy albo zamroź ich warstwy i zapisz DXF ponownie.`);
+      err.udzial = [...udzial].sort((a, b) => b[1] - a[1]).slice(0, 10); throw err;
+    }
+    if (!grupy.size && !teksty.length) throw new Error('W pliku DXF nie znaleziono widocznych elementów rysunku w obszarze modelu (sprawdź, czy warstwy nie są zamrożone).');
 
     // Zasięg rysunku (współrzędne świata) — pełny i „rdzeń” (bez pojedynczych elementów daleko od reszty).
-    const xs = [], ys = []; let n = 0;
-    for (const g of grupy.values()) for (const a of g.linie) for (let i = 0; i < a.length; i += 2) { if ((n++ & 3) === 0) { xs.push(a[i]); ys.push(a[i + 1]); } }
-    for (const t of teksty) { xs.push(t.x); ys.push(t.y); }
+    // pełny zasięg — dokładnie, ze wszystkich wierzchołków (do 0.4.1 z co czwartego, co mogło pominąć skrajną linię); „rdzeń” — z próbki
+    const xs = [], ys = []; let n = 0; const pelny = { minx: Infinity, maxx: -Infinity, miny: Infinity, maxy: -Infinity };
+    const obejmij = (x, y) => { if (x < pelny.minx) pelny.minx = x; if (x > pelny.maxx) pelny.maxx = x; if (y < pelny.miny) pelny.miny = y; if (y > pelny.maxy) pelny.maxy = y; };
+    for (const g of grupy.values()) for (const a of g.linie) for (let i = 0; i < a.length; i += 2) { obejmij(a[i], a[i + 1]); if ((n++ & 3) === 0) { xs.push(a[i]); ys.push(a[i + 1]); } }
+    for (const t of teksty) { obejmij(t.x, t.y); xs.push(t.x); ys.push(t.y); }
     const sortN = (v) => Float64Array.from(v).sort();
     const X = sortN(xs), Y = sortN(ys), q = (A, f) => A[Math.min(A.length - 1, Math.max(0, Math.floor(f * (A.length - 1))))];
-    const pelny = { minx: X[0], maxx: X[X.length - 1], miny: Y[0], maxy: Y[Y.length - 1] };
     const rdzen = { minx: q(X, 0.005), maxx: q(X, 0.995), miny: q(Y, 0.005), maxy: q(Y, 0.995) };
-    const ox = Math.floor(pelny.minx), oy = Math.ceil(pelny.maxy);
+    // Początek układu arkusza. Dla podkładu już używanego w projekcie zostaje ten zapisany (opcje.poczatek) —
+    // inaczej po zmianie sposobu wczytywania (np. pominięciu zamrożonych warstw) znaczniki przesunęłyby się względem rysunku.
+    const ox = opcje.poczatek ? opcje.poczatek[0] : Math.floor(pelny.minx), oy = opcje.poczatek ? opcje.poczatek[1] : Math.ceil(pelny.maxy);
 
     // Przeliczenie do układu arkusza: sx = X − ox, sy = oy − Y (oś y w dół).
     for (const g of grupy.values()) for (const a of g.linie) for (let i = 0; i < a.length; i += 2) { a[i] -= ox; a[i + 1] = oy - a[i + 1]; }
@@ -203,7 +224,7 @@ const Dxf = (() => {
 
     return {
       wersja, kodowanie, jednostki: jedn[0], k: jedn[1], ox, oy,
-      zasieg: { minx: 0, miny: 0, maxx: pelny.maxx - ox, maxy: oy - pelny.miny },
+      zasieg: { minx: 0, miny: 0, maxx: Math.max(pelny.maxx - ox, 1), maxy: Math.max(oy - pelny.miny, 1) },
       widok: { minx: rdzen.minx - ox, maxx: rdzen.maxx - ox, miny: oy - rdzen.maxy, maxy: oy - rdzen.miny },
       warstwy: [...warstwy.values()].sort((a, b) => a.nazwa.localeCompare(b.nazwa, 'pl')),
       grupy: [...grupy.values()], teksty, snap: Geom.indeksPunktow(sp, rozp / 150), lSnap: sp.length,

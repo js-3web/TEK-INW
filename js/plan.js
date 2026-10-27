@@ -18,7 +18,7 @@ const Plan = (() => {
   let v = { s: 1, tx: 0, ty: 0 };             // bieżący widok
   let vt = null;                              // widok, dla którego narysowano płótno tła
   let narz = 'przegladaj', podtryb = 'linia', punkty = [], celownik = null, hover = null, zazn = null;
-  let opcje = { snap: true, orto: false, palec: false, kolory: false, tylkoRysik: false, wygladzaj: true, rysikPisze: true };
+  let opcje = { snap: true, orto: false, palec: false, kolory: false, tylkoRysik: false, wygladzaj: true, rysikPisze: true, kolorPisaka: null }; // kolorPisaka: hex bieżącego koloru notatek (null = kolor szkicu)
   let szkicKsztalt = null, szkicTimer = 0; // kształt rozpoznany po przytrzymaniu rysika na końcu kreski
   const katOsi = () => A && A.T ? -Geom.katOsiX(A.T) : 0; // kierunek osi X rysunku na arkuszu
   const wsk = new Map(); let gest = null; let cb = {};
@@ -163,31 +163,37 @@ const Plan = (() => {
   }
   function etykieta(x, y, tekst, kol, wyb) {
     g.font = "600 11px 'IBM Plex Mono', monospace"; const w = g.measureText(tekst).width + 10;
-    g.fillStyle = wyb ? '#ffb000' : kol; g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+    g.fillStyle = kol; g.strokeStyle = wyb ? HALO_MOCNE : '#fff'; g.lineWidth = wyb ? 3 : 1.5; // wybrany: bursztynowa obwódka (kolor znacznika zostaje — może być wybrany przez użytkownika)
     g.beginPath(); g.roundRect ? g.roundRect(x - w / 2, y - 9, w, 18, 4) : g.rect(x - w / 2, y - 9, w, 18); g.fill(); g.stroke();
-    g.fillStyle = wyb ? '#1d1d1b' : '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(tekst, x, y + 0.5);
+    g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(tekst, x, y + 0.5);
     return [x - w / 2, y - 9, w, 18];
   }
+  const HALO = 'rgba(255,176,0,.55)', HALO_MOCNE = '#ffb000'; // zaznaczenie: poświata pod znacznikiem zamiast zmiany jego koloru
   function rysujZnacznik(z, wyb) {
-    const kol = z.rodzaj === 'F' ? KOLORY.F : (KOLORY[z.typZ] || '#444');
+    const wlasny = kolorPalety(z.kolor), kol = wlasny ? wlasny.hex : (z.rodzaj === 'F' ? KOLORY.F : (KOLORY[z.typZ] || '#444')); // kolor wybrany przez użytkownika albo kolor rodzaju
     const P = (z.geom && z.geom.pkt || []).map(p => naEkran(p[0], p[1])); if (!P.length) return;
     g.save();
     if (z.rodzaj === 'F') {
       const [x, y] = P[0];
       if (z.kier !== null && z.kier !== undefined) {
-        g.fillStyle = wyb ? 'rgba(255,176,0,.28)' : 'rgba(34,195,230,.22)'; g.strokeStyle = wyb ? '#c98a00' : 'rgba(10,143,176,.85)'; g.lineWidth = 1.2;
+        g.fillStyle = wyb ? 'rgba(255,176,0,.28)' : (wlasny ? kol + '38' : 'rgba(34,195,230,.22)'); g.strokeStyle = wyb ? '#c98a00' : (wlasny ? kol : 'rgba(10,143,176,.85)'); g.lineWidth = 1.2;
         g.beginPath(); g.moveTo(x, y); g.arc(x, y, 48, z.kier - 0.5, z.kier + 0.5); g.closePath(); g.fill(); g.stroke();
       }
-      g.beginPath(); g.arc(x, y, wyb ? 13 : 11, 0, Math.PI * 2); g.fillStyle = wyb ? '#ffb000' : kol; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke();
-      g.fillStyle = wyb ? '#1d1d1b' : '#fff'; g.font = "600 10px 'IBM Plex Mono', monospace"; g.textAlign = 'center'; g.textBaseline = 'middle';
+      if (wyb) { g.beginPath(); g.arc(x, y, 19, 0, Math.PI * 2); g.fillStyle = HALO; g.fill(); }
+      g.beginPath(); g.arc(x, y, wyb ? 13 : 11, 0, Math.PI * 2); g.fillStyle = kol; g.fill(); g.lineWidth = 2; g.strokeStyle = '#fff'; g.stroke();
+      g.fillStyle = '#fff'; g.font = "600 10px 'IBM Plex Mono', monospace"; g.textAlign = 'center'; g.textBaseline = 'middle';
       g.fillText(String(parseInt(z.nr.slice(2), 10)), x, y + 0.5);
       if ((z.zdjecia || []).length > 1) { g.fillStyle = '#1d1d1b'; g.font = "500 9px 'IBM Plex Mono', monospace"; g.fillText('×' + z.zdjecia.length, x + 17, y - 10); }
     } else {
-      g.strokeStyle = wyb ? '#ffb000' : kol; g.lineWidth = wyb ? 3.5 : 2.5; g.lineJoin = 'round'; g.lineCap = 'round';
-      if (z.typZ === 'brak') g.setLineDash([7, 5]);
-      if (z.geom.kreski) { for (const k of z.geom.kreski) { const Q = k.pkt.map(q => naEkran(q[0], q[1])); if (Q.length < 2) continue; g.beginPath(); g.moveTo(...Q[0]); for (const q of Q.slice(1)) g.lineTo(...q); if (k.zamkn) g.closePath(); g.stroke(); } } // notatka / szkic z wielu kresek
-      else if (P.length > 1) { g.beginPath(); g.moveTo(...P[0]); for (const p of P.slice(1)) g.lineTo(...p); if (z.geom.zamkn) g.closePath(); g.stroke(); }
-      g.setLineDash([]);
+      g.lineJoin = 'round'; g.lineCap = 'round';
+      const kreska = (Q, zamkn, kl) => { // wybrany: najpierw szeroka poświata, potem kreska w swoim kolorze
+        const sc = () => { g.beginPath(); g.moveTo(...Q[0]); for (const q of Q.slice(1)) g.lineTo(...q); if (zamkn) g.closePath(); };
+        if (wyb) { g.save(); g.setLineDash([]); g.strokeStyle = HALO; g.lineWidth = 10; sc(); g.stroke(); g.restore(); }
+        g.strokeStyle = kl; g.lineWidth = wyb ? 3 : 2.5; if (z.typZ === 'brak') g.setLineDash([7, 5]); sc(); g.stroke(); g.setLineDash([]);
+      };
+      if (z.geom.kreski) { for (const k of z.geom.kreski) { const Q = k.pkt.map(q => naEkran(q[0], q[1])); if (Q.length < 2) continue; const kk = kolorPalety(k.kolor); kreska(Q, k.zamkn, kk ? kk.hex : kol); } } // notatka / szkic z wielu kresek, każda kreska w swoim kolorze
+      else if (P.length > 1) kreska(P, z.geom.zamkn, kol);
+      g.strokeStyle = kol; g.lineWidth = 2.5; g.setLineDash([]);
       if (z.typZ === 'brak' && P.length > 2) { // przekreślenie
         const xs = P.map(p => p[0]), ys = P.map(p => p[1]); g.lineWidth = 1.5; g.beginPath();
         g.moveTo(Math.min(...xs), Math.min(...ys)); g.lineTo(Math.max(...xs), Math.max(...ys)); g.moveTo(Math.max(...xs), Math.min(...ys)); g.lineTo(Math.min(...xs), Math.max(...ys)); g.stroke();
@@ -196,7 +202,7 @@ const Plan = (() => {
         const [a, b] = P, d = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1, nx = -(b[1] - a[1]) / d * 7, ny = (b[0] - a[0]) / d * 7;
         g.lineWidth = 2; g.beginPath(); for (const p of P) { g.moveTo(p[0] - nx + ny * 0.6, p[1] - ny - nx * 0.6); g.lineTo(p[0] + nx - ny * 0.6, p[1] + ny + nx * 0.6); } g.stroke();
       }
-      if (z.typZ === 'uwaga' || z._punktowy) { const [x, y] = P[0]; g.fillStyle = wyb ? '#ffb000' : kol; g.beginPath(); g.moveTo(x, y - 9); g.lineTo(x + 9, y); g.lineTo(x, y + 9); g.lineTo(x - 9, y); g.closePath(); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.stroke(); }
+      if (z.typZ === 'uwaga' || z._punktowy) { const [x, y] = P[0]; if (wyb) { g.fillStyle = HALO; g.beginPath(); g.moveTo(x, y - 15); g.lineTo(x + 15, y); g.lineTo(x, y + 15); g.lineTo(x - 15, y); g.closePath(); g.fill(); } g.fillStyle = kol; g.beginPath(); g.moveTo(x, y - 9); g.lineTo(x + 9, y); g.lineTo(x, y + 9); g.lineTo(x - 9, y); g.closePath(); g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.stroke(); }
       const [lx, ly] = z.typZ === 'wymiar' && P.length === 2 ? [(P[0][0] + P[1][0]) / 2, (P[0][1] + P[1][1]) / 2 - 14] : (z.typZ === 'uwaga' || z._punktowy) ? [P[0][0] + 24, P[0][1] - 14] : [P[0][0], P[0][1] - 14];
       let tekst = 'Z' + parseInt(z.nr.slice(2), 10);
       if (z.typZ === 'wymiar' && Number.isFinite(z.wymPom)) tekst += ' · ' + (cb.formatWym ? cb.formatWym(z) : '');
@@ -223,8 +229,10 @@ const Plan = (() => {
     }
     if (szkic && szkic.length > 1) {
       g.setLineDash([]); g.lineWidth = 2.5; g.lineJoin = 'round'; g.lineCap = 'round';
-      if (szkicKsztalt) { const S0 = szkicKsztalt.pkt.map(p => naEkran(p[0], p[1])); g.strokeStyle = '#e07b3c'; g.beginPath(); g.moveTo(...S0[0]); for (const p of S0) g.lineTo(...p); if (szkicKsztalt.zamkn) g.closePath(); g.stroke(); }
-      else { g.strokeStyle = KOLORY.szkic; g.beginPath(); const S0 = szkic.map(p => naEkran(p[0], p[1])); g.moveTo(...S0[0]); for (const p of S0) g.lineTo(...p); g.stroke(); }
+      if (szkicKsztalt) { // rozpoznany kształt: pomarańczowa poświata pod kreską w kolorze pisaka
+        const S0 = szkicKsztalt.pkt.map(p => naEkran(p[0], p[1])), sciezka = () => { g.beginPath(); g.moveTo(...S0[0]); for (const p of S0) g.lineTo(...p); if (szkicKsztalt.zamkn) g.closePath(); };
+        g.strokeStyle = 'rgba(224,123,60,.45)'; g.lineWidth = 9; sciezka(); g.stroke(); g.strokeStyle = opcje.kolorPisaka || '#e07b3c'; g.lineWidth = 2.5; sciezka(); g.stroke(); }
+      else { g.strokeStyle = opcje.kolorPisaka || KOLORY.szkic; g.beginPath(); const S0 = szkic.map(p => naEkran(p[0], p[1])); g.moveTo(...S0[0]); for (const p of S0) g.lineTo(...p); g.stroke(); }
     }
     if (foto) { const [x, y] = naEkran(foto.x, foto.y); g.setLineDash([]); g.fillStyle = 'rgba(34,195,230,.25)'; g.strokeStyle = KOLORY.F;
       if (foto.kier !== null) { g.beginPath(); g.moveTo(x, y); g.arc(x, y, 48, foto.kier - 0.5, foto.kier + 0.5); g.closePath(); g.fill(); g.stroke(); }
