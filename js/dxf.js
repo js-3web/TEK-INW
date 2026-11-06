@@ -97,10 +97,17 @@ const Dxf = (() => {
     const warstwa = (n) => { let w = warstwy.get(n); if (!w) { const def = warstwyDef[n] || {}; w = { nazwa: n, kolor: def.color !== undefined ? hex(def.color) : '#000000', wid: def.visible !== false && !def.frozen }; warstwy.set(n, w); } return w; };
     const grupy = new Map(); // „warstwa|kolor” → { warstwa, kolor, linie: [[x,y,...], ...] }
     const teksty = [], snap = [], proste = [];
-    let licznik = 0, przekroczono = false; const LIMIT = 1500000;
+    let licznik = 0, przekroczono = false, pominiete = 0; const LIMIT = 1500000;
     const nieZbieraj = () => { przekroczono = true; grupy.clear(); for (const t of [snap, proste, teksty]) { t.length = 0; t.push = () => 0; } }; // po przekroczeniu tylko liczymy — żeby wskazać, co zajmuje najwięcej
 
     function dodaj(war, kol, punkty, zamknij) {
+      // 0.4.3: wierzchołek z niepoprawną współrzędną (NaN/nieskończoność — np. uszkodzony łuk, splajn lub blok w pliku z CAD)
+      // dzieli linię na części i jest pomijany; wcześniej trafiał do PDF i wywracał eksport fotodokumentacji.
+      if (punkty.some(p => !(Number.isFinite(p[0]) && Number.isFinite(p[1])))) {
+        pominiete++; let cz = [];
+        for (const p of punkty) { if (Number.isFinite(p[0]) && Number.isFinite(p[1])) cz.push(p); else { dodaj(war, kol, cz, false); cz = []; } }
+        dodaj(war, kol, cz, false); return;
+      }
       if (punkty.length < 2) return;
       licznik += punkty.length;
       if (licznik > LIMIT && !przekroczono) nieZbieraj();
@@ -162,6 +169,7 @@ const Dxf = (() => {
           let poz = 'L', pion = 'B';
           if (mt) { const a = e.attachmentPoint || 1; poz = 'LCR'[(a - 1) % 3]; pion = 'TMB'[Math.floor((a - 1) / 3)]; }
           else { poz = ['L', 'C', 'R', 'L', 'C', 'L'][e.halign || 0]; pion = ['B', 'B', 'M', 'T'][e.valign || 0]; if (e.halign === 4) pion = 'M'; }
+          if (!(Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(h) && Number.isFinite(rw))) { pominiete++; break; }
           teksty.push({ x, y, h, rot: rw, t: txt, war, kol, poz, pion, mt });
           snap.push([x, y]); break;
         }
@@ -227,7 +235,7 @@ const Dxf = (() => {
       zasieg: { minx: 0, miny: 0, maxx: Math.max(pelny.maxx - ox, 1), maxy: Math.max(oy - pelny.miny, 1) },
       widok: { minx: rdzen.minx - ox, maxx: rdzen.maxx - ox, miny: oy - rdzen.maxy, maxy: oy - rdzen.miny },
       warstwy: [...warstwy.values()].sort((a, b) => a.nazwa.localeCompare(b.nazwa, 'pl')),
-      grupy: [...grupy.values()], teksty, snap: Geom.indeksPunktow(sp, rozp / 150), lSnap: sp.length,
+      grupy: [...grupy.values()], teksty, pominiete, snap: Geom.indeksPunktow(sp, rozp / 150), lSnap: sp.length,
       T: { a: 1, b: 0, c: 0, d: -1, e: ox, f: oy }
     };
   }

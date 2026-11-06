@@ -66,7 +66,8 @@ const Eksport = (() => {
         const emb = await doc.embedPage(st, { left: vw[0], bottom: vw[1], right: vw[2], top: vw[3] });
         PODK.set(a.id, { emb, V: r.wym.transform, L: vw[0], B: vw[1], w: r.wym.w, h: r.wym.h, pl: { p: 1, ox: 0, oy: r.wym.h } });
       } else {
-        PODK.set(a.id, await podkladDxf(PDFDocument, r, f, doc));
+        try { PODK.set(a.id, await podkladDxf(PDFDocument, r, f, doc)); }
+        catch (e) { throw new Error(`Nie udało się przygotować podkładu „${a.nazwa}” (${e && e.message || e}).`); }
       }
     }
     /* sheet (vx,vy, y w dół) → strona (X,Y, y w górę):  X = p·vx + ox,  Y = −p·vy + oy;  macierz cm dla XObject podkładu */
@@ -484,7 +485,12 @@ const Eksport = (() => {
       if (wid[gr.warstwa] === false) continue;
       let s = '', n = 0;
       const wyslij = () => { if (s) pg.drawSvgPath(s, { x: 0, y: Ht, borderColor: PDFLib.rgb(0.16, 0.16, 0.15), borderWidth: 0.35 }); s = ''; n = 0; };
-      for (const a of gr.linie) { s += `M${r3(X(a[0]))} ${r3(Y(a[1]))}`; for (let i = 2; i < a.length; i += 2) s += `L${r3(X(a[i]))} ${r3(Y(a[i + 1]))}`; n += a.length; if (n > 40000) wyslij(); }
+      for (const a of gr.linie) {
+        // zabezpieczenie: współrzędna NaN/nieskończona w ścieżce wywraca bibliotekę PDF („t.toString”) — taki wierzchołek przerywa linię
+        let nowa = true;
+        for (let i = 0; i < a.length; i += 2) { const x = r3(X(a[i])), y = r3(Y(a[i + 1])); if (!Number.isFinite(x) || !Number.isFinite(y)) { nowa = true; continue; } s += `${nowa ? 'M' : 'L'}${x} ${y}`; nowa = false; }
+        n += a.length; if (n > 40000) wyslij();
+      }
       wyslij();
     }
     for (const t of d.teksty) {
@@ -497,6 +503,7 @@ const Eksport = (() => {
         let dx = t.poz === 'C' ? -tw / 2 : t.poz === 'R' ? -tw : 0;
         let dy = t.pion === 'T' ? -fs : t.pion === 'M' ? -fs * 0.5 : 0; dy -= i * fs * 1.25; if (t.mt && t.pion === 'B') dy += (linie.length - 1) * fs * 1.25;
         const x0 = X(t.x), y0 = Ht - Y(t.y), c = Math.cos(kat), s = Math.sin(kat);
+        if (![x0, y0, fs, c, s, tw].every(Number.isFinite)) return;
         try { pg.drawText(l, { x: x0 + dx * c - dy * s, y: y0 + dx * s + dy * c, size: fs, font, color: PDFLib.rgb(0.16, 0.16, 0.15), rotate: PDFLib.degrees(kat * 180 / Math.PI) }); } catch (e) { /* znak spoza czcionki — pomijamy */ }
       });
     }
